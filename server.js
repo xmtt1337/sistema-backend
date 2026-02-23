@@ -2,7 +2,7 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
-const pool = require("./db");
+const sql = require("./db"); // <- IMPORTANTE: sql, não pool
 
 const app = express();
 
@@ -21,11 +21,13 @@ app.get("/", (req, res) => {
 ================================= */
 app.get("/test-db", async (req, res) => {
   try {
-    const result = await pool.query("SELECT NOW()");
+    const result = await sql`SELECT NOW()`;
+    
     res.json({
       success: true,
-      serverTime: result.rows[0],
+      serverTime: result[0],
     });
+
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -35,7 +37,7 @@ app.get("/test-db", async (req, res) => {
 });
 
 /* ===============================
-   LOGIN (ainda simples - temporário)
+   LOGIN (temporário ainda)
 ================================= */
 app.post("/login", (req, res) => {
   const { username, password } = req.body;
@@ -44,6 +46,18 @@ app.post("/login", (req, res) => {
     res.json({ success: true });
   } else {
     res.status(401).json({ success: false });
+  }
+});
+
+/* ===============================
+   LISTAR USERS (exemplo real)
+================================= */
+app.get("/users", async (req, res) => {
+  try {
+    const users = await sql`SELECT * FROM users`;
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
