@@ -2,7 +2,6 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
-const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const sql = require("./db");
 
@@ -24,43 +23,40 @@ app.get("/", (req, res) => {
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
 
+  console.log("Username recebido:", username);
+  console.log("Password recebida:", password);
+
   try {
     const user = await sql`
       SELECT * FROM users
       WHERE username = ${username}
     `;
 
+    console.log("Resultado da busca:", user);
+
     if (user.length === 0) {
+      console.log("Usuário NÃO encontrado");
       return res.json({ success: false });
     }
 
-    if (password !== user[0].password) {
-    return res.json({ success: false });
-    }
-    const token = jwt.sign(
-      {
-        id: user[0].id,
-        username: user[0].username,
-        role: user[0].role
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "8h" }
-    );
+    console.log("Senha no banco:", user[0].password);
 
-    res.json({
-      success: true,
-      token,
-      username: user[0].username
-    });
+    if (password !== user[0].password) {
+      console.log("Senha NÃO confere");
+      return res.json({ success: false });
+    }
+
+    console.log("Login OK");
+
+    res.json({ success: true });
 
   } catch (error) {
+    console.log("Erro:", error);
     res.status(500).json({ error: error.message });
   }
 });
 
-/* ===============================
-   TESTE DE CONEXÃO
-================================= */
+
 app.get("/test-db", async (req, res) => {
   try {
     const result = await sql`SELECT NOW()`;
