@@ -15,7 +15,29 @@ app.use(cors());
 app.get("/", (req, res) => {
   res.send("Servidor rodando 🚀");
 });
+/* ===============================
+   LOGIN
+================================= */
+app.post("/login", async (req, res) => {
+  const { email, senha } = req.body;
 
+  try {
+    const user = await sql`
+      SELECT * FROM users
+      WHERE email = ${email}
+      AND senha = ${senha}
+    `;
+
+    if (user.length > 0) {
+      res.json({ success: true });
+    } else {
+      res.json({ success: false });
+    }
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 /* ===============================
    TESTE DE CONEXÃO COM O BANCO
 ================================= */
@@ -36,22 +58,12 @@ app.get("/test-db", async (req, res) => {
   }
 });
 
-/* ===============================
-   LOGIN (temporário ainda)
-================================= */
-app.post("/login", (req, res) => {
-  const { username, password } = req.body;
-
-  if (username === "admin" && password === "1234") {
-    res.json({ success: true });
-  } else {
-    res.status(401).json({ success: false });
-  }
-});
 
 /* ===============================
    LISTAR USERS (exemplo real)
 ================================= */
+
+
 app.get("/users", async (req, res) => {
   try {
     const users = await sql`SELECT * FROM users`;
