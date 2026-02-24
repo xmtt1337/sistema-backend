@@ -19,13 +19,13 @@ app.get("/", (req, res) => {
    LOGIN
 ================================= */
 app.post("/login", async (req, res) => {
-  const { usuario, senha } = req.body;
+  const { usuario, password } = req.body;
 
   try {
     const user = await sql`
       SELECT * FROM users
       WHERE usuario = ${usuario}
-      AND senha = ${senha}
+      AND senha = ${password}
     `;
 
     if (user.length > 0) {
