@@ -2,7 +2,9 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
-const sql = require("./db"); // <- IMPORTANTE: sql, não pool
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const sql = require("./db");
 
 const app = express();
 
@@ -15,61 +17,65 @@ app.use(cors());
 app.get("/", (req, res) => {
   res.send("Servidor rodando 🚀");
 });
+
 /* ===============================
-   LOGIN
+   LOGIN SEGURO
 ================================= */
 app.post("/login", async (req, res) => {
-  const { usuario, password } = req.body;
+  const { username, password } = req.body;
 
   try {
     const user = await sql`
       SELECT * FROM users
-      WHERE usuario = ${usuario}
-      AND senha = ${password}
+      WHERE username = ${username}
     `;
 
-    if (user.length > 0) {
-      res.json({ success: true });
-    } else {
-      res.json({ success: false });
+    if (user.length === 0) {
+      return res.json({ success: false });
     }
+
+    const validPassword = await bcrypt.compare(password, user[0].password);
+
+    if (!validPassword) {
+      return res.json({ success: false });
+    }
+
+    const token = jwt.sign(
+      {
+        id: user[0].id,
+        username: user[0].username,
+        role: user[0].role
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "8h" }
+    );
+
+    res.json({
+      success: true,
+      token,
+      username: user[0].username
+    });
 
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
+
 /* ===============================
-   TESTE DE CONEXÃO COM O BANCO
+   TESTE DE CONEXÃO
 ================================= */
 app.get("/test-db", async (req, res) => {
   try {
     const result = await sql`SELECT NOW()`;
-    
     res.json({
       success: true,
       serverTime: result[0],
     });
-
   } catch (error) {
     res.status(500).json({
       success: false,
       error: error.message,
     });
-  }
-});
-
-
-/* ===============================
-   LISTAR USERS (exemplo real)
-================================= */
-
-
-app.get("/users", async (req, res) => {
-  try {
-    const users = await sql`SELECT * FROM users`;
-    res.json(users);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
   }
 });
 
