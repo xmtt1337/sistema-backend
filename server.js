@@ -18,13 +18,31 @@ app.get("/", (req, res) => {
 });
 
 /* ===============================
-   LOGIN SEGURO
+   MIDDLEWARE DE VERIFICAÇÃO TOKEN
+================================= */
+function verificarToken(req, res, next) {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) {
+    return res.status(401).json({ error: "Token não fornecido" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (err) {
+    return res.status(403).json({ error: "Token inválido" });
+  }
+}
+
+/* ===============================
+   LOGIN
 ================================= */
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
-
-  console.log("Username recebido:", username);
-  console.log("Password recebida:", password);
 
   try {
     const user = await sql`
@@ -32,31 +50,49 @@ app.post("/login", async (req, res) => {
       WHERE username = ${username}
     `;
 
-    console.log("Resultado da busca:", user);
-
     if (user.length === 0) {
-      console.log("Usuário NÃO encontrado");
       return res.json({ success: false });
     }
-
-    console.log("Senha no banco:", user[0].password);
 
     if (password !== user[0].password) {
-      console.log("Senha NÃO confere");
       return res.json({ success: false });
     }
 
-    console.log("Login OK");
+    // 🔐 GERANDO TOKEN
+    const token = jwt.sign(
+      {
+        id: user[0].id,
+        username: user[0].username,
+        role: user[0].role
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "8h" }
+    );
 
-    res.json({ success: true });
+    res.json({
+      success: true,
+      token,
+      username: user[0].username
+    });
 
   } catch (error) {
-    console.log("Erro:", error);
     res.status(500).json({ error: error.message });
   }
 });
 
+/* ===============================
+   ROTA PROTEGIDA (EXEMPLO)
+================================= */
+app.get("/perfil", verificarToken, (req, res) => {
+  res.json({
+    message: "Acesso permitido ✅",
+    usuario: req.user
+  });
+});
 
+/* ===============================
+   TESTE DE CONEXÃO DB
+================================= */
 app.get("/test-db", async (req, res) => {
   try {
     const result = await sql`SELECT NOW()`;
