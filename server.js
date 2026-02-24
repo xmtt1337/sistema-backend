@@ -34,12 +34,9 @@ app.post("/login", async (req, res) => {
       return res.json({ success: false });
     }
 
-    const validPassword = await bcrypt.compare(password, user[0].password);
-
-    if (!validPassword) {
-      return res.json({ success: false });
+    if (password !== user[0].password) {
+    return res.json({ success: false });
     }
-
     const token = jwt.sign(
       {
         id: user[0].id,
