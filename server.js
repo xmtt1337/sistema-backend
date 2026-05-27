@@ -258,6 +258,42 @@ app.get("/painel", verificarToken, async (req, res) => {
   }
 });
 
+app.get("/admin/entregadores", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const { mes, ano, quinzena } = req.query;
+
+    const planilha = await sql`
+      SELECT spreadsheet_id FROM planilhas_quinzena
+      WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+      LIMIT 1
+    `;
+    if (!planilha.length) {
+      return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
+    }
+
+    const { resumo } = await lerPlanilha(planilha[0].spreadsheet_id);
+
+    const cabecalho = (resumo[1] || []).map(c =>
+      String(c || "").trim().replace(/\n/g, " ").replace(/  +/g, " ")
+    );
+    const linhas = resumo.slice(2);
+    const nomeIdx = cabecalho.indexOf("NOME");
+
+    if (nomeIdx < 0) {
+      return res.status(500).json({ error: "Coluna NOME não encontrada na planilha." });
+    }
+
+    const entregadores = linhas
+      .map(l => String(l[nomeIdx] || "").trim())
+      .filter(n => n.length > 0);
+
+    res.json({ entregadores });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/admin/painel", verificarToken, verificarAdmin, async (req, res) => {
   try {
     const { mes, ano, quinzena, entregador } = req.query;
