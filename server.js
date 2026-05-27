@@ -424,6 +424,49 @@ app.get("/admin/painel", verificarToken, verificarAdmin, async (req, res) => {
   }
 });
 
+app.get("/admin/resumo-quinzena", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const { mes, ano, quinzena } = req.query;
+
+    const planilha = await sql`
+      SELECT spreadsheet_id FROM planilhas_quinzena
+      WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+      LIMIT 1
+    `;
+    if (!planilha.length) {
+      return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
+    }
+
+    const { resumo } = await lerPlanilha(planilha[0].spreadsheet_id);
+
+    const cabecalho = (resumo[1] || []).map(c =>
+      String(c || "").trim().replace(/\n/g, " ").replace(/  +/g, " ")
+    );
+    const nomeIdx = cabecalho.indexOf("NOME");
+    const linhas  = resumo.slice(2).filter(l => String(l[nomeIdx] || "").trim());
+
+    const somaNum = colNome => {
+      const idx = cabecalho.indexOf(colNome);
+      return linhas.reduce((s, l) => s + num(idx >= 0 ? l[idx] : ""), 0);
+    };
+
+    res.json({
+      entregadores:    linhas.length,
+      total_geral:     moeda(somaNum("TOTAL A RECEBER")),
+      total_geral_num: somaNum("TOTAL A RECEBER"),
+      total_entregues: Math.round(somaNum("TOTAL ENTREGUES")),
+      loggi:  { valor_num: somaNum("VALOR LOGGI"),  qtd: Math.round(somaNum("ENTREGUES NO PRAZO LOGGI")) },
+      jt:     { valor_num: somaNum("VALOR J&T"),    qtd: Math.round(somaNum("ENTREGUES J&T")) },
+      imile:  { valor_num: somaNum("VALOR IMILE"),  qtd: Math.round(somaNum("QTD IMILE")) },
+      anjun:  { valor_num: somaNum("VALOR ANJUN"),  qtd: Math.round(somaNum("ENTREGUES NO PRAZO ANJUN")) },
+      shopee: { valor_num: somaNum("VALOR SHOPEE"), qtd: Math.round(somaNum("PACOTES ENTREGUES SPX")) },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/admin/planilhas", verificarToken, verificarAdmin, async (req, res) => {
   const rows = await sql`
     SELECT * FROM planilhas_quinzena ORDER BY ano DESC, mes DESC, quinzena DESC
