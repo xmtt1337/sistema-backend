@@ -43,7 +43,8 @@ app.post("/login", async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: "8h" }
     );
-    res.json({ success: true, token, username: user[0].username });
+    const require_password_change = user[0].password === "GC2026";
+    res.json({ success: true, token, username: user[0].username, require_password_change });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -60,6 +61,9 @@ app.post("/redefinir-senha", async (req, res) => {
   }
   if (senha_nova.length < 4) {
     return res.status(400).json({ success: false, error: "A senha nova deve ter pelo menos 4 caracteres." });
+  }
+  if (senha_nova === "GC2026") {
+    return res.status(400).json({ success: false, error: "Esta senha não pode ser utilizada. Escolha uma senha diferente." });
   }
   try {
     const user = await sql`SELECT * FROM users WHERE username = ${username}`;
