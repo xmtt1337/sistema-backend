@@ -258,6 +258,128 @@ app.get("/painel", verificarToken, async (req, res) => {
   }
 });
 
+app.get("/admin/painel", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const { mes, ano, quinzena, entregador } = req.query;
+
+    if (!entregador) {
+      return res.status(400).json({ error: "Informe o usuário do entregador." });
+    }
+
+    const nomeEntregador = entregador;
+
+    const planilha = await sql`
+      SELECT spreadsheet_id FROM planilhas_quinzena
+      WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+      LIMIT 1
+    `;
+    if (!planilha.length) {
+      return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
+    }
+
+    const { resumo, extravios } = await lerPlanilha(planilha[0].spreadsheet_id);
+
+    const cabecalho = (resumo[1] || []).map(c =>
+      String(c || "").trim().replace(/\n/g, " ").replace(/  +/g, " ")
+    );
+    const linhas = resumo.slice(2);
+    const nomeIdx = cabecalho.indexOf("NOME");
+
+    const linha = linhas.find(l =>
+      String(l[nomeIdx] || "").trim().toLowerCase() === nomeEntregador.toLowerCase()
+    );
+    if (!linha) {
+      return res.status(404).json({ error: `Entregador "${nomeEntregador}" não encontrado na planilha.` });
+    }
+
+    const get = col => {
+      const idx = cabecalho.indexOf(col);
+      return idx >= 0 ? String(linha[idx] || "") : "";
+    };
+
+    const extCab = (extravios[0] || []).map(c => String(c || "").trim());
+    const extLinhas = extravios.slice(1);
+    const extCabLower = extCab.map(c => c.toLowerCase());
+
+    const findCol = name => {
+      const exact = extCab.indexOf(name);
+      return exact >= 0 ? exact : extCabLower.indexOf(name.toLowerCase());
+    };
+
+    const colValorCandidates = ["VALOR", "VLR", "VALOR DO PRODUTO", "VALOR PRODUTO"];
+    const colValorIdx = colValorCandidates.reduce((f, c) => f >= 0 ? f : findCol(c), -1);
+
+    const statusIdx = findCol("STATUS");
+    const respIdx   = findCol("Responsavel");
+    const transpIdx = findCol("TRANSPORTADORA");
+    const codIdx    = findCol("CÓDIGO");
+    const endIdx    = findCol("Endereço");
+    const datIdx    = findCol("Data do desconto");
+
+    const nome_lower = nomeEntregador.toLowerCase();
+    const extravioslst = [];
+    const multaslst    = [];
+    let codigoPeriodo  = "";
+
+    extLinhas.forEach(row => {
+      if (!codigoPeriodo && datIdx >= 0 && row[datIdx] && row[datIdx].trim()) {
+        codigoPeriodo = row[datIdx].trim();
+      }
+      const status   = String(row[statusIdx] || "").trim().toLowerCase();
+      const resp     = String(row[respIdx]   || "").trim();
+      const nomeResp = resp.split(" - ")[0].trim().toLowerCase();
+      if (!nome_lower.includes(nomeResp) && !nomeResp.includes(nome_lower)) return;
+
+      const valorRaw = colValorIdx >= 0 ? String(row[colValorIdx] || "") : "";
+      const valorNum = num(valorRaw);
+      const item = {
+        transportadora: String(row[transpIdx] || "—").trim(),
+        codigo:         String(row[codIdx]    || "—").trim(),
+        endereco:       String(row[endIdx]    || "—").trim(),
+        valor:          valorNum ? moeda(valorNum) : "R$ 0,00",
+        tem_valor:      valorNum !== 0
+      };
+      if (status === "multa") multaslst.push(item);
+      else extravioslst.push(item);
+    });
+
+    const multas_valor      = num(get("MULTAS"));
+    const extravios_valor   = num(get("EXTRAVIOS"));
+    const total_receber_num = num(get("TOTAL A RECEBER"));
+
+    res.json({
+      nome:             nomeEntregador,
+      periodo:          parsePeriodo(codigoPeriodo),
+      total_receber:    moeda(total_receber_num),
+      total_receber_num,
+      total_entregues:  inteiro(get("TOTAL ENTREGUES")),
+      adicional:        moeda(num(get("ADICIONAL ------ ACERTO"))),
+      deslocamento:     moeda(num(get("DESLOCAMENTO"))),
+      valor_grandes:    moeda(num(get("VALOR A PAGAR PACOTES GRANDES"))),
+      desconto_ticket:  moeda(num(get("DESCONTO CARTÃO TICKET LOG"))),
+      descontos:        moeda(extravios_valor + multas_valor),
+      multas:           moeda(multas_valor),
+      valor_loggi:      moeda(num(get("VALOR LOGGI"))),
+      entregues_loggi:  inteiro(get("ENTREGUES NO PRAZO LOGGI")),
+      valor_jt:         moeda(num(get("VALOR J&T"))),
+      entregues_jt:     inteiro(get("ENTREGUES J&T")),
+      valor_imile:      moeda(num(get("VALOR IMILE"))),
+      qtd_imile:        inteiro(get("QTD IMILE")),
+      valor_anjun:      moeda(num(get("VALOR ANJUN"))),
+      entregues_anjun:  inteiro(get("ENTREGUES NO PRAZO ANJUN")),
+      valor_shopee:     moeda(num(get("VALOR SHOPEE"))),
+      entregues_shopee: inteiro(get("PACOTES ENTREGUES SPX")),
+      extravios_linhas: extravioslst,
+      multas_linhas:    multaslst,
+      multas_tem_valor: multas_valor !== 0
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/admin/planilhas", verificarToken, verificarAdmin, async (req, res) => {
   const rows = await sql`
     SELECT * FROM planilhas_quinzena ORDER BY ano DESC, mes DESC, quinzena DESC
