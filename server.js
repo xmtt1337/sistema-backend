@@ -283,9 +283,17 @@ app.get("/admin/entregadores", verificarToken, verificarAdmin, async (req, res) 
       return res.status(500).json({ error: "Coluna NOME não encontrada na planilha." });
     }
 
+    const totalIdx = cabecalho.indexOf("TOTAL A RECEBER");
+
     const entregadores = linhas
-      .map(l => String(l[nomeIdx] || "").trim())
-      .filter(n => n.length > 0);
+      .map(l => {
+        const nome = String(l[nomeIdx] || "").trim();
+        if (!nome) return null;
+        const totalRaw = totalIdx >= 0 ? String(l[totalIdx] || "") : "";
+        const totalNum = num(totalRaw);
+        return { nome, total_receber: moeda(totalNum), total_receber_num: totalNum };
+      })
+      .filter(Boolean);
 
     res.json({ entregadores });
   } catch (err) {
