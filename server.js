@@ -128,7 +128,7 @@ app.get("/painel", verificarToken, async (req, res) => {
       LIMIT 1
     `;
     if (!planilha.length) {
-      return res.status(404).json({ error: "Planilha não cadastrada para este período." });
+      return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
     }
 
     const { resumo, extravios } = await lerPlanilha(planilha[0].spreadsheet_id);
