@@ -3,116 +3,263 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
+const { google } = require("googleapis");
 const sql = require("./db");
 
 const app = express();
-
 app.use(express.json());
 app.use(cors());
 
-/* ===============================
-   ROTA PRINCIPAL
-================================= */
 app.get("/", (req, res) => {
   res.send("Servidor rodando 🚀");
 });
 
-/* ===============================
-   MIDDLEWARE DE VERIFICAÇÃO TOKEN
-================================= */
 function verificarToken(req, res, next) {
   const authHeader = req.headers.authorization;
-
-  if (!authHeader) {
-    return res.status(401).json({ error: "Token não fornecido" });
-  }
-
+  if (!authHeader) return res.status(401).json({ error: "Token não fornecido" });
   const token = authHeader.split(" ")[1];
-
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
+    req.user = jwt.verify(token, process.env.JWT_SECRET);
     next();
-  } catch (err) {
+  } catch {
     return res.status(403).json({ error: "Token inválido" });
   }
 }
 
-/* ===============================
-   LOGIN
-================================= */
+function verificarAdmin(req, res, next) {
+  if (req.user.role !== "admin") return res.status(403).json({ error: "Acesso negado" });
+  next();
+}
+
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
-
   try {
-    const user = await sql`
-      SELECT * FROM users
-      WHERE username = ${username}
-    `;
-
-    if (user.length === 0) {
+    const user = await sql`SELECT * FROM users WHERE username = ${username}`;
+    if (!user.length || password !== user[0].password) {
       return res.json({ success: false });
     }
-
-    if (password !== user[0].password) {
-      return res.json({ success: false });
-    }
-
-    // 🔐 GERANDO TOKEN
     const token = jwt.sign(
-      {
-        id: user[0].id,
-        username: user[0].username,
-        role: user[0].role
-      },
+      { id: user[0].id, username: user[0].username, role: user[0].role },
       process.env.JWT_SECRET,
       { expiresIn: "8h" }
     );
-
-    res.json({
-      success: true,
-      token,
-      username: user[0].username
-    });
-
+    res.json({ success: true, token, username: user[0].username });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-/* ===============================
-   ROTA PROTEGIDA (EXEMPLO)
-================================= */
 app.get("/perfil", verificarToken, (req, res) => {
-  res.json({
-    message: "Acesso permitido ✅",
-    usuario: req.user
-  });
+  res.json({ message: "Acesso permitido ✅", usuario: req.user });
 });
 
-/* ===============================
-   TESTE DE CONEXÃO DB
-================================= */
-app.get("/test-db", async (req, res) => {
+function num(valor) {
+  if (valor === null || valor === undefined || valor === "") return 0;
+  let s = String(valor)
+    .replace(/R\$\s?/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".")
+    .replace("−", "-")
+    .replace("–", "-")
+    .trim();
+  const neg = s.startsWith("-");
+  s = s.replace(/-/g, "");
+  const n = parseFloat(s) || 0;
+  return neg ? -n : n;
+}
+
+function moeda(valor) {
+  const n = typeof valor === "number" ? valor : num(valor);
+  return "R$ " + n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function inteiro(valor) {
+  const n = Math.round(num(valor));
+  return isNaN(n) ? "0" : n.toLocaleString("pt-BR");
+}
+
+function parsePeriodo(codigo) {
+  const meses = {
+    jan: [1, "Janeiro"], fev: [2, "Fevereiro"], mar: [3, "Março"],
+    abr: [4, "Abril"],   mai: [5, "Maio"],       jun: [6, "Junho"],
+    jul: [7, "Julho"],   ago: [8, "Agosto"],      set: [9, "Setembro"],
+    out: [10, "Outubro"], nov: [11, "Novembro"], dez: [12, "Dezembro"]
+  };
+  const match = String(codigo || "").trim().match(/^Q([12])([A-Za-z]{3})/);
+  if (!match) return codigo || "—";
+  const [, quinzena, mesCod] = match;
+  const info = meses[mesCod.toLowerCase()];
+  if (!info) return codigo;
+  const [numMes, nomeMes] = info;
+  const ano = new Date().getFullYear();
+  const ultimoDia = new Date(ano, numMes, 0).getDate();
+  return quinzena === "1"
+    ? `01 – 15 / ${nomeMes} / ${ano}`
+    : `16 – ${String(ultimoDia).padStart(2, "0")} / ${nomeMes} / ${ano}`;
+}
+
+function extrairSpreadsheetId(url) {
+  const match = String(url).match(/\/d\/([a-zA-Z0-9-_]+)/);
+  return match ? match[1] : url;
+}
+
+async function lerPlanilha(spreadsheetId) {
+  const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+  const auth = new google.auth.GoogleAuth({
+    credentials: creds,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+  });
+  const sheets = google.sheets({ version: "v4", auth });
+  const [r1, r2] = await Promise.all([
+    sheets.spreadsheets.values.get({ spreadsheetId, range: "RESUMO!A:Z" }),
+    sheets.spreadsheets.values.get({ spreadsheetId, range: "Extravios!A:Z" })
+  ]);
+  return { resumo: r1.data.values || [], extravios: r2.data.values || [] };
+}
+
+app.get("/painel", verificarToken, async (req, res) => {
   try {
-    const result = await sql`SELECT NOW()`;
+    const { mes, ano, quinzena } = req.query;
+    const nomeEntregador = req.user.username;
+
+    const planilha = await sql`
+      SELECT spreadsheet_id FROM planilhas_quinzena
+      WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+      LIMIT 1
+    `;
+    if (!planilha.length) {
+      return res.status(404).json({ error: "Planilha não cadastrada para este período." });
+    }
+
+    const { resumo, extravios } = await lerPlanilha(planilha[0].spreadsheet_id);
+
+    const cabecalho = (resumo[1] || []).map(c =>
+      String(c || "").trim().replace(/\n/g, " ").replace(/  +/g, " ")
+    );
+    const linhas = resumo.slice(2);
+    const nomeIdx = cabecalho.indexOf("NOME");
+
+    const linha = linhas.find(l =>
+      String(l[nomeIdx] || "").trim().toLowerCase() === nomeEntregador.toLowerCase()
+    );
+    if (!linha) {
+      return res.status(404).json({ error: `Entregador "${nomeEntregador}" não encontrado na planilha.` });
+    }
+
+    const get = col => {
+      const idx = cabecalho.indexOf(col);
+      return idx >= 0 ? String(linha[idx] || "") : "";
+    };
+
+    const extCab = (extravios[0] || []).map(c => String(c || "").trim());
+    const extLinhas = extravios.slice(1);
+
+    const colValorCandidates = ["VALOR", "Valor", "valor", "VLR", "VALOR DO PRODUTO", "Valor do produto", "VALOR PRODUTO"];
+    const colValorIdx = colValorCandidates.reduce((f, c) => f >= 0 ? f : extCab.indexOf(c), -1);
+
+    const statusIdx = extCab.indexOf("STATUS");
+    const respIdx   = extCab.indexOf("Responsavel");
+    const transpIdx = extCab.indexOf("TRANSPORTADORA");
+    const codIdx    = extCab.indexOf("CÓDIGO");
+    const endIdx    = extCab.indexOf("Endereço");
+    const datIdx    = extCab.indexOf("Data do desconto");
+
+    const nome_lower = nomeEntregador.toLowerCase();
+    const extravioslst = [];
+    const multaslst    = [];
+    let codigoPeriodo  = "";
+
+    extLinhas.forEach(row => {
+      if (!codigoPeriodo && datIdx >= 0 && row[datIdx] && row[datIdx].trim()) {
+        codigoPeriodo = row[datIdx].trim();
+      }
+      const status   = String(row[statusIdx] || "").trim().toLowerCase();
+      const resp     = String(row[respIdx]   || "").trim();
+      const nomeResp = resp.split(" - ")[0].trim().toLowerCase();
+      if (!nome_lower.includes(nomeResp) && !nomeResp.includes(nome_lower)) return;
+
+      const valorRaw = colValorIdx >= 0 ? String(row[colValorIdx] || "") : "";
+      const valorNum = num(valorRaw);
+      const item = {
+        transportadora: String(row[transpIdx] || "—").trim(),
+        codigo:         String(row[codIdx]    || "—").trim(),
+        endereco:       String(row[endIdx]    || "—").trim(),
+        valor:          valorNum ? moeda(valorNum) : "R$ 0,00",
+        tem_valor:      valorNum !== 0
+      };
+      if (status === "multa") multaslst.push(item);
+      else extravioslst.push(item);
+    });
+
+    const multas_valor      = num(get("MULTAS"));
+    const extravios_valor   = num(get("EXTRAVIOS"));
+    const total_receber_num = num(get("TOTAL A RECEBER"));
+
     res.json({
-      success: true,
-      serverTime: result[0],
+      nome:             nomeEntregador,
+      periodo:          parsePeriodo(codigoPeriodo),
+      total_receber:    moeda(total_receber_num),
+      total_receber_num,
+      total_entregues:  inteiro(get("TOTAL ENTREGUES")),
+      adicional:        moeda(num(get("ADICIONAL ------ ACERTO"))),
+      deslocamento:     moeda(num(get("DESLOCAMENTO"))),
+      valor_grandes:    moeda(num(get("VALOR A PAGAR PACOTES GRANDES"))),
+      desconto_ticket:  moeda(num(get("DESCONTO CARTÃO TICKET LOG"))),
+      descontos:        moeda(extravios_valor + multas_valor),
+      multas:           moeda(multas_valor),
+      valor_loggi:      moeda(num(get("VALOR LOGGI"))),
+      entregues_loggi:  inteiro(get("ENTREGUES NO PRAZO LOGGI")),
+      valor_jt:         moeda(num(get("VALOR J&T"))),
+      entregues_jt:     inteiro(get("ENTREGUES J&T")),
+      valor_imile:      moeda(num(get("VALOR IMILE"))),
+      qtd_imile:        inteiro(get("QTD IMILE")),
+      valor_anjun:      moeda(num(get("VALOR ANJUN"))),
+      entregues_anjun:  inteiro(get("ENTREGUES NO PRAZO ANJUN")),
+      valor_shopee:     moeda(num(get("VALOR SHOPEE"))),
+      entregues_shopee: inteiro(get("PACOTES ENTREGUES SPX")),
+      extravios_linhas: extravioslst,
+      multas_linhas:    multaslst,
+      multas_tem_valor: multas_valor !== 0
     });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message,
-    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-/* ===============================
-   START SERVER
-================================= */
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-  console.log("Servidor rodando na porta " + PORT);
+app.get("/admin/planilhas", verificarToken, verificarAdmin, async (req, res) => {
+  const rows = await sql`
+    SELECT * FROM planilhas_quinzena ORDER BY ano DESC, mes DESC, quinzena DESC
+  `;
+  res.json(rows);
 });
+
+app.post("/admin/planilhas", verificarToken, verificarAdmin, async (req, res) => {
+  const { mes, ano, quinzena, spreadsheet_url } = req.body;
+  const spreadsheet_id = extrairSpreadsheetId(spreadsheet_url);
+  await sql`
+    INSERT INTO planilhas_quinzena (mes, ano, quinzena, spreadsheet_id)
+    VALUES (${parseInt(mes)}, ${parseInt(ano)}, ${parseInt(quinzena)}, ${spreadsheet_id})
+    ON CONFLICT (mes, ano, quinzena)
+    DO UPDATE SET spreadsheet_id = EXCLUDED.spreadsheet_id
+  `;
+  res.json({ success: true });
+});
+
+app.delete("/admin/planilhas/:id", verificarToken, verificarAdmin, async (req, res) => {
+  await sql`DELETE FROM planilhas_quinzena WHERE id = ${req.params.id}`;
+  res.json({ success: true });
+});
+
+app.get("/test-db", async (req, res) => {
+  try {
+    const result = await sql`SELECT NOW()`;
+    res.json({ success: true, serverTime: result[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log("Servidor rodando na porta " + PORT));
