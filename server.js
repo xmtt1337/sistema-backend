@@ -153,16 +153,22 @@ app.get("/painel", verificarToken, async (req, res) => {
 
     const extCab = (extravios[0] || []).map(c => String(c || "").trim());
     const extLinhas = extravios.slice(1);
+    const extCabLower = extCab.map(c => c.toLowerCase());
 
-    const colValorCandidates = ["VALOR", "Valor", "valor", "VLR", "VALOR DO PRODUTO", "Valor do produto", "VALOR PRODUTO"];
-    const colValorIdx = colValorCandidates.reduce((f, c) => f >= 0 ? f : extCab.indexOf(c), -1);
+    const findCol = name => {
+      const exact = extCab.indexOf(name);
+      return exact >= 0 ? exact : extCabLower.indexOf(name.toLowerCase());
+    };
 
-    const statusIdx = extCab.indexOf("STATUS");
-    const respIdx   = extCab.indexOf("Responsavel");
-    const transpIdx = extCab.indexOf("TRANSPORTADORA");
-    const codIdx    = extCab.indexOf("CÓDIGO");
-    const endIdx    = extCab.indexOf("Endereço");
-    const datIdx    = extCab.indexOf("Data do desconto");
+    const colValorCandidates = ["VALOR", "VLR", "VALOR DO PRODUTO", "VALOR PRODUTO"];
+    const colValorIdx = colValorCandidates.reduce((f, c) => f >= 0 ? f : findCol(c), -1);
+
+    const statusIdx = findCol("STATUS");
+    const respIdx   = findCol("Responsavel");
+    const transpIdx = findCol("TRANSPORTADORA");
+    const codIdx    = findCol("CÓDIGO");
+    const endIdx    = findCol("Endereço");
+    const datIdx    = findCol("Data do desconto");
 
     const nome_lower = nomeEntregador.toLowerCase();
     const extravioslst = [];
