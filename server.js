@@ -53,6 +53,26 @@ app.get("/perfil", verificarToken, (req, res) => {
   res.json({ message: "Acesso permitido ✅", usuario: req.user });
 });
 
+app.post("/redefinir-senha", async (req, res) => {
+  const { username, senha_atual, senha_nova } = req.body;
+  if (!username || !senha_atual || !senha_nova) {
+    return res.status(400).json({ success: false, error: "Preencha todos os campos." });
+  }
+  if (senha_nova.length < 4) {
+    return res.status(400).json({ success: false, error: "A senha nova deve ter pelo menos 4 caracteres." });
+  }
+  try {
+    const user = await sql`SELECT * FROM users WHERE username = ${username}`;
+    if (!user.length || senha_atual !== user[0].password) {
+      return res.status(401).json({ success: false, error: "Usuário ou senha atual incorretos." });
+    }
+    await sql`UPDATE users SET password = ${senha_nova} WHERE username = ${username}`;
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 function num(valor) {
   if (valor === null || valor === undefined || valor === "") return 0;
   let s = String(valor)
