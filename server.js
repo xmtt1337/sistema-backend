@@ -653,7 +653,7 @@ app.post("/nota", verificarToken, async (req, res) => {
       DO UPDATE SET emissao = ${emissao}, cnpj = ${cnpj}, emissor = ${emissor}, valor = ${valor},
                     tomador = ${tomador}, status = ${status || null},
                     numero_nf = ${numero_nf || null}, chave_acesso = ${chave_acesso || null},
-                    valor_fechamento = ${vf}, updated_at = NOW()
+                    valor_fechamento = ${vf}, deleted = FALSE, updated_at = NOW()
     `;
     res.json({ success: true });
   } catch (err) {
