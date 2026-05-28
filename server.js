@@ -605,6 +605,7 @@ app.get("/admin/notas", verificarToken, verificarAdmin, async (req, res) => {
       FROM notas_fiscais nf
       JOIN users u ON u.id = nf.user_id
       WHERE nf.mes = ${parseInt(mes)} AND nf.ano = ${parseInt(ano)} AND nf.quinzena = ${parseInt(quinzena)}
+        AND (nf.deleted IS NULL OR nf.deleted = FALSE)
       ORDER BY u.username ASC
     `;
     const result = rows.map(nf => {
@@ -628,6 +629,7 @@ app.get("/nota", verificarToken, async (req, res) => {
     const rows = await sql`
       SELECT * FROM notas_fiscais
       WHERE user_id = ${req.user.id} AND mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+        AND (deleted IS NULL OR deleted = FALSE)
       LIMIT 1
     `;
     rows.length ? res.json(rows[0]) : res.status(404).json({ error: "Nenhuma nota encontrada" });
@@ -690,7 +692,7 @@ app.delete("/nota", verificarToken, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
     await sql`
-      DELETE FROM notas_fiscais
+      UPDATE notas_fiscais SET deleted = TRUE
       WHERE user_id = ${req.user.id} AND mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
     `;
     res.json({ success: true });
@@ -724,6 +726,7 @@ async function initDB() {
   await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS numero_nf       TEXT`;
   await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS chave_acesso    TEXT`;
   await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS valor_fechamento NUMERIC`;
+  await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS deleted BOOLEAN DEFAULT FALSE`;
 }
 
 const PORT = process.env.PORT || 3000;
