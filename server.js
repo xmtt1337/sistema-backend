@@ -629,12 +629,12 @@ app.get("/nota", verificarToken, async (req, res) => {
 
 app.post("/nota", verificarToken, async (req, res) => {
   try {
-    const { mes, ano, quinzena, emissao, cnpj, emissor, valor, tomador } = req.body;
+    const { mes, ano, quinzena, emissao, cnpj, emissor, valor, tomador, status } = req.body;
     await sql`
-      INSERT INTO notas_fiscais (user_id, mes, ano, quinzena, emissao, cnpj, emissor, valor, tomador)
-      VALUES (${req.user.id}, ${parseInt(mes)}, ${parseInt(ano)}, ${parseInt(quinzena)}, ${emissao}, ${cnpj}, ${emissor}, ${valor}, ${tomador})
+      INSERT INTO notas_fiscais (user_id, mes, ano, quinzena, emissao, cnpj, emissor, valor, tomador, status)
+      VALUES (${req.user.id}, ${parseInt(mes)}, ${parseInt(ano)}, ${parseInt(quinzena)}, ${emissao}, ${cnpj}, ${emissor}, ${valor}, ${tomador}, ${status || null})
       ON CONFLICT (user_id, mes, ano, quinzena)
-      DO UPDATE SET emissao = ${emissao}, cnpj = ${cnpj}, emissor = ${emissor}, valor = ${valor}, tomador = ${tomador}, updated_at = NOW()
+      DO UPDATE SET emissao = ${emissao}, cnpj = ${cnpj}, emissor = ${emissor}, valor = ${valor}, tomador = ${tomador}, status = ${status || null}, updated_at = NOW()
     `;
     res.json({ success: true });
   } catch (err) {
@@ -668,10 +668,15 @@ async function initDB() {
       emissor    TEXT,
       valor      TEXT,
       tomador    TEXT,
+      status     TEXT,
       created_at TIMESTAMP DEFAULT NOW(),
       updated_at TIMESTAMP DEFAULT NOW(),
       UNIQUE (user_id, mes, ano, quinzena)
     )
+  `;
+  // Migração: adiciona coluna status em tabelas criadas antes desta versão
+  await sql`
+    ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS status TEXT
   `;
 }
 
