@@ -505,6 +505,89 @@ app.delete("/admin/planilhas/:id", verificarToken, verificarAdmin, async (req, r
   res.json({ success: true });
 });
 
+app.get("/admin/historico", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const { ano } = req.query;
+    const planilhas = await sql`
+      SELECT mes, quinzena, spreadsheet_id
+      FROM planilhas_quinzena
+      WHERE ano = ${parseInt(ano)}
+      ORDER BY mes ASC, quinzena ASC
+    `;
+    if (!planilhas.length) return res.json([]);
+
+    const resultados = await Promise.all(planilhas.map(async p => {
+      try {
+        const { resumo } = await lerPlanilha(p.spreadsheet_id);
+        const cabecalho = (resumo[1] || []).map(c => String(c || "").trim().replace(/\n/g, " ").replace(/  +/g, " "));
+        const nomeIdx   = cabecalho.indexOf("NOME");
+        const linhas    = resumo.slice(2).filter(l => String(l[nomeIdx] || "").trim());
+        const somaNum   = col => {
+          const idx = cabecalho.indexOf(col);
+          return linhas.reduce((s, l) => s + num(idx >= 0 ? l[idx] : ""), 0);
+        };
+        return {
+          mes: p.mes, quinzena: p.quinzena,
+          total_entregues: Math.round(somaNum("TOTAL ENTREGUES")),
+          loggi:  { qtd: Math.round(somaNum("ENTREGUES NO PRAZO LOGGI")) },
+          jt:     { qtd: Math.round(somaNum("ENTREGUES J&T")) },
+          imile:  { qtd: Math.round(somaNum("QTD IMILE")) },
+          anjun:  { qtd: Math.round(somaNum("ENTREGUES NO PRAZO ANJUN")) },
+          shopee: { qtd: Math.round(somaNum("PACOTES ENTREGUES SPX")) },
+        };
+      } catch { return null; }
+    }));
+
+    res.json(resultados.filter(Boolean));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/historico", verificarToken, async (req, res) => {
+  try {
+    const { ano } = req.query;
+    const nomeEntregador = req.user.username;
+
+    const planilhas = await sql`
+      SELECT mes, quinzena, spreadsheet_id
+      FROM planilhas_quinzena
+      WHERE ano = ${parseInt(ano)}
+      ORDER BY mes ASC, quinzena ASC
+    `;
+    if (!planilhas.length) return res.json([]);
+
+    const resultados = await Promise.all(planilhas.map(async p => {
+      try {
+        const { resumo } = await lerPlanilha(p.spreadsheet_id);
+        const cabecalho = (resumo[1] || []).map(c => String(c || "").trim().replace(/\n/g, " ").replace(/  +/g, " "));
+        const nomeIdx   = cabecalho.indexOf("NOME");
+        const linha     = resumo.slice(2).find(l =>
+          String(l[nomeIdx] || "").trim().toLowerCase() === nomeEntregador.toLowerCase()
+        );
+        if (!linha) return null;
+        const get = col => { const i = cabecalho.indexOf(col); return i >= 0 ? String(linha[i] || "") : ""; };
+        return {
+          mes: p.mes, quinzena: p.quinzena,
+          total_receber_num: num(get("TOTAL A RECEBER")),
+          total_entregues:   Math.round(num(get("TOTAL ENTREGUES"))),
+          entregues_loggi:   Math.round(num(get("ENTREGUES NO PRAZO LOGGI"))),
+          entregues_jt:      Math.round(num(get("ENTREGUES J&T"))),
+          qtd_imile:         Math.round(num(get("QTD IMILE"))),
+          entregues_anjun:   Math.round(num(get("ENTREGUES NO PRAZO ANJUN"))),
+          entregues_shopee:  Math.round(num(get("PACOTES ENTREGUES SPX"))),
+        };
+      } catch { return null; }
+    }));
+
+    res.json(resultados.filter(Boolean));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/test-db", async (req, res) => {
   try {
     const result = await sql`SELECT NOW()`;
