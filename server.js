@@ -597,6 +597,22 @@ app.get("/test-db", async (req, res) => {
   }
 });
 
+app.get("/admin/notas", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const { mes, ano, quinzena } = req.query;
+    const rows = await sql`
+      SELECT nf.*, u.username
+      FROM notas_fiscais nf
+      JOIN users u ON u.id = nf.user_id
+      WHERE nf.mes = ${parseInt(mes)} AND nf.ano = ${parseInt(ano)} AND nf.quinzena = ${parseInt(quinzena)}
+      ORDER BY u.username ASC
+    `;
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/nota", verificarToken, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
