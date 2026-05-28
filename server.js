@@ -629,14 +629,46 @@ app.get("/nota", verificarToken, async (req, res) => {
 
 app.post("/nota", verificarToken, async (req, res) => {
   try {
-    const { mes, ano, quinzena, emissao, cnpj, emissor, valor, tomador, status } = req.body;
+    const { mes, ano, quinzena, emissao, cnpj, emissor, valor, tomador, status, numero_nf, chave_acesso } = req.body;
     await sql`
-      INSERT INTO notas_fiscais (user_id, mes, ano, quinzena, emissao, cnpj, emissor, valor, tomador, status)
-      VALUES (${req.user.id}, ${parseInt(mes)}, ${parseInt(ano)}, ${parseInt(quinzena)}, ${emissao}, ${cnpj}, ${emissor}, ${valor}, ${tomador}, ${status || null})
+      INSERT INTO notas_fiscais (user_id, mes, ano, quinzena, emissao, cnpj, emissor, valor, tomador, status, numero_nf, chave_acesso)
+      VALUES (${req.user.id}, ${parseInt(mes)}, ${parseInt(ano)}, ${parseInt(quinzena)},
+              ${emissao}, ${cnpj}, ${emissor}, ${valor}, ${tomador},
+              ${status || null}, ${numero_nf || null}, ${chave_acesso || null})
       ON CONFLICT (user_id, mes, ano, quinzena)
-      DO UPDATE SET emissao = ${emissao}, cnpj = ${cnpj}, emissor = ${emissor}, valor = ${valor}, tomador = ${tomador}, status = ${status || null}, updated_at = NOW()
+      DO UPDATE SET emissao = ${emissao}, cnpj = ${cnpj}, emissor = ${emissor}, valor = ${valor},
+                    tomador = ${tomador}, status = ${status || null},
+                    numero_nf = ${numero_nf || null}, chave_acesso = ${chave_acesso || null},
+                    updated_at = NOW()
     `;
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/nota/verificar", verificarToken, async (req, res) => {
+  try {
+    const { chave_acesso, mes, ano, quinzena } = req.query;
+    if (!chave_acesso) return res.json({ duplicata: false });
+    const rows = await sql`
+      SELECT nf.mes, nf.ano, nf.quinzena, u.username
+      FROM notas_fiscais nf
+      JOIN users u ON u.id = nf.user_id
+      WHERE nf.chave_acesso = ${chave_acesso}
+        AND NOT (nf.user_id = ${req.user.id}
+             AND nf.mes      = ${parseInt(mes)}
+             AND nf.ano      = ${parseInt(ano)}
+             AND nf.quinzena = ${parseInt(quinzena)})
+    `;
+    if (rows.length) {
+      const r = rows[0];
+      const meses = ["","Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+      const detalhe = `${r.username} — ${r.quinzena}ª quinzena de ${meses[r.mes]}/${r.ano}`;
+      res.json({ duplicata: true, detalhe });
+    } else {
+      res.json({ duplicata: false });
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -658,26 +690,27 @@ app.delete("/nota", verificarToken, async (req, res) => {
 async function initDB() {
   await sql`
     CREATE TABLE IF NOT EXISTS notas_fiscais (
-      id         SERIAL PRIMARY KEY,
-      user_id    INTEGER NOT NULL,
-      mes        INTEGER NOT NULL,
-      ano        INTEGER NOT NULL,
-      quinzena   INTEGER NOT NULL,
-      emissao    TEXT,
-      cnpj       TEXT,
-      emissor    TEXT,
-      valor      TEXT,
-      tomador    TEXT,
-      status     TEXT,
-      created_at TIMESTAMP DEFAULT NOW(),
-      updated_at TIMESTAMP DEFAULT NOW(),
+      id            SERIAL PRIMARY KEY,
+      user_id       INTEGER NOT NULL,
+      mes           INTEGER NOT NULL,
+      ano           INTEGER NOT NULL,
+      quinzena      INTEGER NOT NULL,
+      emissao       TEXT,
+      cnpj          TEXT,
+      emissor       TEXT,
+      valor         TEXT,
+      tomador       TEXT,
+      status        TEXT,
+      numero_nf     TEXT,
+      chave_acesso  TEXT,
+      created_at    TIMESTAMP DEFAULT NOW(),
+      updated_at    TIMESTAMP DEFAULT NOW(),
       UNIQUE (user_id, mes, ano, quinzena)
     )
   `;
-  // Migração: adiciona coluna status em tabelas criadas antes desta versão
-  await sql`
-    ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS status TEXT
-  `;
+  await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS status       TEXT`;
+  await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS numero_nf    TEXT`;
+  await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS chave_acesso TEXT`;
 }
 
 const PORT = process.env.PORT || 3000;
