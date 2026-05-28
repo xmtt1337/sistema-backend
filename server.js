@@ -6,9 +6,23 @@ const jwt = require("jsonwebtoken");
 const { google } = require("googleapis");
 const sql = require("./db");
 
+const ORIGENS_PERMITIDAS = [
+  "https://xmtt1337.github.io",
+  "http://localhost:5500",   // Live Server local
+  "http://127.0.0.1:5500"
+];
+
 const app = express();
 app.use(express.json());
-app.use(cors());
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || ORIGENS_PERMITIDAS.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS: origem não permitida — " + origin));
+    }
+  }
+}));
 
 app.get("/", (req, res) => {
   res.send("Servidor rodando 🚀");
