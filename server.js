@@ -597,5 +597,70 @@ app.get("/test-db", async (req, res) => {
   }
 });
 
+app.get("/nota", verificarToken, async (req, res) => {
+  try {
+    const { mes, ano, quinzena } = req.query;
+    const rows = await sql`
+      SELECT * FROM notas_fiscais
+      WHERE user_id = ${req.user.id} AND mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+      LIMIT 1
+    `;
+    rows.length ? res.json(rows[0]) : res.status(404).json({ error: "Nenhuma nota encontrada" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/nota", verificarToken, async (req, res) => {
+  try {
+    const { mes, ano, quinzena, emissao, cnpj, emissor, valor, tomador } = req.body;
+    await sql`
+      INSERT INTO notas_fiscais (user_id, mes, ano, quinzena, emissao, cnpj, emissor, valor, tomador)
+      VALUES (${req.user.id}, ${parseInt(mes)}, ${parseInt(ano)}, ${parseInt(quinzena)}, ${emissao}, ${cnpj}, ${emissor}, ${valor}, ${tomador})
+      ON CONFLICT (user_id, mes, ano, quinzena)
+      DO UPDATE SET emissao = ${emissao}, cnpj = ${cnpj}, emissor = ${emissor}, valor = ${valor}, tomador = ${tomador}, updated_at = NOW()
+    `;
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/nota", verificarToken, async (req, res) => {
+  try {
+    const { mes, ano, quinzena } = req.query;
+    await sql`
+      DELETE FROM notas_fiscais
+      WHERE user_id = ${req.user.id} AND mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+    `;
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+async function initDB() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS notas_fiscais (
+      id         SERIAL PRIMARY KEY,
+      user_id    INTEGER NOT NULL,
+      mes        INTEGER NOT NULL,
+      ano        INTEGER NOT NULL,
+      quinzena   INTEGER NOT NULL,
+      emissao    TEXT,
+      cnpj       TEXT,
+      emissor    TEXT,
+      valor      TEXT,
+      tomador    TEXT,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE (user_id, mes, ano, quinzena)
+    )
+  `;
+}
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("Servidor rodando na porta " + PORT));
+app.listen(PORT, () => {
+  console.log("Servidor rodando na porta " + PORT);
+  initDB().catch(err => console.error("Erro ao inicializar tabelas:", err));
+});
