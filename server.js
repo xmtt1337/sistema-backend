@@ -607,7 +607,16 @@ app.get("/admin/notas", verificarToken, verificarAdmin, async (req, res) => {
       WHERE nf.mes = ${parseInt(mes)} AND nf.ano = ${parseInt(ano)} AND nf.quinzena = ${parseInt(quinzena)}
       ORDER BY u.username ASC
     `;
-    res.json(rows);
+    const result = rows.map(nf => {
+      let status = nf.status;
+      if (!status && nf.valor_fechamento && nf.valor) {
+        const nfNum = parseFloat(String(nf.valor).replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".")) || 0;
+        const diff  = Math.abs(nfNum - parseFloat(nf.valor_fechamento));
+        status = diff < 0.02 ? "confere" : "diverge";
+      }
+      return { ...nf, status };
+    });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -629,17 +638,20 @@ app.get("/nota", verificarToken, async (req, res) => {
 
 app.post("/nota", verificarToken, async (req, res) => {
   try {
-    const { mes, ano, quinzena, emissao, cnpj, emissor, valor, tomador, status, numero_nf, chave_acesso } = req.body;
+    const { mes, ano, quinzena, emissao, cnpj, emissor, valor, tomador,
+            status, numero_nf, chave_acesso, valor_fechamento } = req.body;
+    const vf = valor_fechamento ? parseFloat(valor_fechamento) : null;
     await sql`
-      INSERT INTO notas_fiscais (user_id, mes, ano, quinzena, emissao, cnpj, emissor, valor, tomador, status, numero_nf, chave_acesso)
+      INSERT INTO notas_fiscais (user_id, mes, ano, quinzena, emissao, cnpj, emissor, valor, tomador,
+                                 status, numero_nf, chave_acesso, valor_fechamento)
       VALUES (${req.user.id}, ${parseInt(mes)}, ${parseInt(ano)}, ${parseInt(quinzena)},
               ${emissao}, ${cnpj}, ${emissor}, ${valor}, ${tomador},
-              ${status || null}, ${numero_nf || null}, ${chave_acesso || null})
+              ${status || null}, ${numero_nf || null}, ${chave_acesso || null}, ${vf})
       ON CONFLICT (user_id, mes, ano, quinzena)
       DO UPDATE SET emissao = ${emissao}, cnpj = ${cnpj}, emissor = ${emissor}, valor = ${valor},
                     tomador = ${tomador}, status = ${status || null},
                     numero_nf = ${numero_nf || null}, chave_acesso = ${chave_acesso || null},
-                    updated_at = NOW()
+                    valor_fechamento = ${vf}, updated_at = NOW()
     `;
     res.json({ success: true });
   } catch (err) {
@@ -708,9 +720,10 @@ async function initDB() {
       UNIQUE (user_id, mes, ano, quinzena)
     )
   `;
-  await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS status       TEXT`;
-  await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS numero_nf    TEXT`;
-  await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS chave_acesso TEXT`;
+  await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS status          TEXT`;
+  await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS numero_nf       TEXT`;
+  await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS chave_acesso    TEXT`;
+  await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS valor_fechamento NUMERIC`;
 }
 
 const PORT = process.env.PORT || 3000;
