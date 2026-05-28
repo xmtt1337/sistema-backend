@@ -601,12 +601,12 @@ app.get("/admin/notas", verificarToken, verificarAdmin, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
     const rows = await sql`
-      SELECT nf.*, u.username
+      SELECT DISTINCT ON (nf.user_id) nf.*, u.username
       FROM notas_fiscais nf
       JOIN users u ON u.id = nf.user_id
       WHERE nf.mes = ${parseInt(mes)} AND nf.ano = ${parseInt(ano)} AND nf.quinzena = ${parseInt(quinzena)}
         AND (nf.deleted IS NULL OR nf.deleted = FALSE)
-      ORDER BY u.username ASC
+      ORDER BY nf.user_id, nf.id DESC
     `;
     const result = rows.map(nf => {
       let status = nf.status;
@@ -646,6 +646,7 @@ app.get("/nota", verificarToken, async (req, res) => {
       SELECT * FROM notas_fiscais
       WHERE user_id = ${req.user.id} AND mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
         AND (deleted IS NULL OR deleted = FALSE)
+      ORDER BY id DESC
       LIMIT 1
     `;
     rows.length ? res.json(rows[0]) : res.status(404).json({ error: "Nenhuma nota encontrada" });
@@ -661,15 +662,10 @@ app.post("/nota", verificarToken, async (req, res) => {
     const vf = valor_fechamento ? parseFloat(valor_fechamento) : null;
     await sql`
       INSERT INTO notas_fiscais (user_id, mes, ano, quinzena, emissao, cnpj, emissor, valor, tomador,
-                                 status, numero_nf, chave_acesso, valor_fechamento)
+                                 status, numero_nf, chave_acesso, valor_fechamento, deleted)
       VALUES (${req.user.id}, ${parseInt(mes)}, ${parseInt(ano)}, ${parseInt(quinzena)},
               ${emissao}, ${cnpj}, ${emissor}, ${valor}, ${tomador},
-              ${status || null}, ${numero_nf || null}, ${chave_acesso || null}, ${vf})
-      ON CONFLICT (user_id, mes, ano, quinzena)
-      DO UPDATE SET emissao = ${emissao}, cnpj = ${cnpj}, emissor = ${emissor}, valor = ${valor},
-                    tomador = ${tomador}, status = ${status || null},
-                    numero_nf = ${numero_nf || null}, chave_acesso = ${chave_acesso || null},
-                    valor_fechamento = ${vf}, deleted = FALSE, updated_at = NOW()
+              ${status || null}, ${numero_nf || null}, ${chave_acesso || null}, ${vf}, FALSE)
     `;
     res.json({ success: true });
   } catch (err) {
@@ -686,6 +682,7 @@ app.get("/nota/verificar", verificarToken, async (req, res) => {
       FROM notas_fiscais nf
       JOIN users u ON u.id = nf.user_id
       WHERE nf.chave_acesso = ${chave_acesso}
+        AND (nf.deleted IS NULL OR nf.deleted = FALSE)
         AND NOT (nf.user_id = ${req.user.id}
              AND nf.mes      = ${parseInt(mes)}
              AND nf.ano      = ${parseInt(ano)}
@@ -743,6 +740,7 @@ async function initDB() {
   await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS chave_acesso    TEXT`;
   await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS valor_fechamento NUMERIC`;
   await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS deleted BOOLEAN DEFAULT FALSE`;
+  await sql`ALTER TABLE notas_fiscais DROP CONSTRAINT IF EXISTS notas_fiscais_user_id_mes_ano_quinzena_key`;
 }
 
 const PORT = process.env.PORT || 3000;
