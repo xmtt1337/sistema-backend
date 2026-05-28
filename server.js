@@ -623,6 +623,22 @@ app.get("/admin/notas", verificarToken, verificarAdmin, async (req, res) => {
   }
 });
 
+app.get("/minhas-notas", verificarToken, async (req, res) => {
+  try {
+    const rows = await sql`
+      SELECT id, mes, ano, quinzena, emissao, cnpj, emissor, valor, tomador,
+             status, numero_nf, chave_acesso, valor_fechamento
+      FROM notas_fiscais
+      WHERE user_id = ${req.user.id}
+        AND (deleted IS NULL OR deleted = FALSE)
+      ORDER BY ano DESC, mes DESC, quinzena DESC
+    `;
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/nota", verificarToken, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
