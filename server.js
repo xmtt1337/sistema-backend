@@ -688,12 +688,36 @@ app.get("/admin/conferencia", verificarToken, verificarAdmin, async (req, res) =
     `;
     if (!planilha.length) return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
 
-    const { resumo } = await lerPlanilha(planilha[0].spreadsheet_id);
+    const [{ resumo }, cadastroRows] = await Promise.all([
+      lerPlanilha(planilha[0].spreadsheet_id),
+      lerCadastroPix()
+    ]);
+
     const cabecalho = (resumo[1] || []).map(c => String(c || "").trim().replace(/\n/g, " ").replace(/  +/g, " "));
     const linhas    = resumo.slice(2);
     const nomeIdx   = cabecalho.indexOf("NOME");
     const totalIdx  = cabecalho.indexOf("TOTAL A RECEBER");
     if (nomeIdx < 0) return res.status(500).json({ error: "Coluna NOME não encontrada." });
+
+    // ── Mapa de telefone da planilha de cadastro ──
+    let cabC = [], linhasC = [];
+    for (let i = 0; i < Math.min(5, cadastroRows.length); i++) {
+      if (cadastroRows[i]?.some(c => c && String(c).trim())) {
+        cabC    = cadastroRows[i].map(c => String(c || "").trim().toUpperCase());
+        linhasC = cadastroRows.slice(i + 1);
+        break;
+      }
+    }
+    const findColC = (keys) => cabC.findIndex(c => keys.some(k => c.includes(k)));
+    const nomeIdxC = findColC(["USUARIO", "USUARIOS", "NOME", "ENTREGADOR"]);
+    const telIdx   = findColC(["TELEFONE", "CELULAR", "FONE", "WHATSAPP", "TEL"]);
+
+    const cadTelMap = {};
+    linhasC.forEach(l => {
+      const nome = nomeIdxC >= 0 ? String(l[nomeIdxC] || "").trim() : "";
+      if (!nome) return;
+      cadTelMap[nome.toLowerCase()] = telIdx >= 0 ? String(l[telIdx] || "").trim() : "";
+    });
 
     // NFs ativas para o período (mais recente por entregador)
     const nfRows = await sql`
@@ -723,7 +747,8 @@ app.get("/admin/conferencia", verificarToken, verificarAdmin, async (req, res) =
         total_receber_num: totalNum,
         emitiu_nf: !!nf,
         valor_nf: nf ? nf.valor : null,
-        status
+        status,
+        telefone: cadTelMap[nome.toLowerCase()] || ""
       };
     }).filter(Boolean);
 
