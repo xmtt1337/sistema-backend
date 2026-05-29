@@ -803,6 +803,18 @@ app.patch("/admin/usuarios/:id", verificarToken, verificarAdmin, async (req, res
   }
 });
 
+app.put("/admin/usuarios/:id/senha", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { senha } = req.body;
+    if (!senha || senha.length < 4) return res.status(400).json({ error: "A senha deve ter pelo menos 4 caracteres." });
+    await sql`UPDATE users SET password = ${senha} WHERE id = ${id}`;
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete("/admin/usuarios/:id", verificarToken, verificarAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
