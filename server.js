@@ -760,10 +760,10 @@ app.get("/nota/verificar", verificarToken, async (req, res) => {
 // ───── ADMIN USUÁRIOS ─────
 app.get("/admin/usuarios", verificarToken, verificarAdmin, async (req, res) => {
   try {
-    const rows = await sql`
-      SELECT id, username, role, COALESCE(active, TRUE) AS active
-      FROM users ORDER BY role, username
-    `;
+    const { role } = req.query;
+    const rows = role
+      ? await sql`SELECT id, username, role, COALESCE(active, TRUE) AS active FROM users WHERE role = ${role} ORDER BY username`
+      : await sql`SELECT id, username, role, COALESCE(active, TRUE) AS active FROM users ORDER BY role, username`;
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
