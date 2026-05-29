@@ -158,6 +158,83 @@ async function lerPlanilha(spreadsheetId) {
   return { resumo: r1.data.values || [], extravios: r2.data.values || [] };
 }
 
+const CADASTRO_PIX_ID = "1Udt_neQUNYHWFmndFHU7evg5fG62Ueh82aWUG8-l8xI";
+
+async function lerCadastroPix() {
+  const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+  const auth  = new google.auth.GoogleAuth({ credentials: creds, scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"] });
+  const sheets = google.sheets({ version: "v4", auth });
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: CADASTRO_PIX_ID });
+  const sheetName = meta.data.sheets[0].properties.title;
+  const r = await sheets.spreadsheets.values.get({ spreadsheetId: CADASTRO_PIX_ID, range: `${sheetName}!A:Z` });
+  return r.data.values || [];
+}
+
+app.get("/admin/pagamentos", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const { mes, ano, quinzena } = req.query;
+    const planilha = await sql`
+      SELECT spreadsheet_id FROM planilhas_quinzena
+      WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+      LIMIT 1
+    `;
+    if (!planilha.length) return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
+
+    const [{ resumo }, cadastroRows] = await Promise.all([
+      lerPlanilha(planilha[0].spreadsheet_id),
+      lerCadastroPix()
+    ]);
+
+    // ── Planilha de fechamento ──
+    const cabF = (resumo[1] || []).map(c => String(c || "").trim().replace(/\n/g, " ").replace(/  +/g, " "));
+    const nomeIdxF  = cabF.indexOf("NOME");
+    const totalIdxF = cabF.indexOf("TOTAL A RECEBER");
+    if (nomeIdxF < 0) return res.status(500).json({ error: "Coluna NOME não encontrada na planilha de fechamento." });
+
+    // ── Planilha de cadastro PIX ──
+    // Encontra a linha de cabeçalho (primeira linha não vazia)
+    let cabC = [], linhasC = [];
+    for (let i = 0; i < Math.min(5, cadastroRows.length); i++) {
+      if (cadastroRows[i]?.some(c => c && String(c).trim())) {
+        cabC   = cadastroRows[i].map(c => String(c || "").trim().toUpperCase());
+        linhasC = cadastroRows.slice(i + 1);
+        break;
+      }
+    }
+    const findCol = (keys) => cabC.findIndex(c => keys.some(k => c.includes(k)));
+    const nomeIdxC = findCol(["NOME", "ENTREGADOR"]);
+    const docIdx   = findCol(["DOCUMENTO", "CPF", "CNPJ", "DOC"]);
+    const pixIdx   = findCol(["CHAVE PIX", "CHAVE_PIX", "CHAVEPIX", "PIX"]);
+    const tipoIdx  = findCol(["TIPO CHAVE", "TIPO PIX", "TIPO"]);
+
+    const cadMap = {};
+    linhasC.forEach(l => {
+      const nome = nomeIdxC >= 0 ? String(l[nomeIdxC] || "").trim() : "";
+      if (!nome) return;
+      cadMap[nome.toLowerCase()] = {
+        documento: docIdx  >= 0 ? String(l[docIdx]  || "").trim() : "",
+        chave_pix: pixIdx  >= 0 ? String(l[pixIdx]  || "").trim() : "",
+        tipo_pix:  tipoIdx >= 0 ? String(l[tipoIdx] || "").trim() : "",
+      };
+    });
+
+    const result = resumo.slice(2)
+      .map(l => {
+        const nome = String(l[nomeIdxF] || "").trim();
+        if (!nome) return null;
+        const totalNum = totalIdxF >= 0 ? num(String(l[totalIdxF] || "")) : 0;
+        if (totalNum <= 0) return null;
+        const cad = cadMap[nome.toLowerCase()] || {};
+        return { nome, total: moeda(totalNum), total_num: totalNum, ...cad };
+      })
+      .filter(Boolean);
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/painel", verificarToken, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
