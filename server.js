@@ -94,6 +94,14 @@ app.post("/redefinir-senha", async (req, res) => {
   }
 });
 
+function normNome(s) {
+  return String(s || "").trim()
+    .replace(/[–—−‑]/g, "-")
+    .replace(/\s*-\s*/g, " - ")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
 function num(valor) {
   if (valor === null || valor === undefined || valor === "") return 0;
   let s = String(valor)
@@ -211,7 +219,7 @@ app.get("/admin/pagamentos", verificarToken, verificarAdmin, async (req, res) =>
     linhasC.forEach(l => {
       const nome = nomeIdxC >= 0 ? String(l[nomeIdxC] || "").trim() : "";
       if (!nome) return;
-      cadMap[nome.toLowerCase()] = {
+      cadMap[normNome(nome)] = {
         documento: docIdx  >= 0 ? String(l[docIdx]  || "").trim() : "",
         chave_pix: pixIdx  >= 0 ? String(l[pixIdx]  || "").trim() : "",
         tipo_pix:  tipoIdx >= 0 ? String(l[tipoIdx] || "").trim() : "",
@@ -224,7 +232,7 @@ app.get("/admin/pagamentos", verificarToken, verificarAdmin, async (req, res) =>
         if (!nome) return null;
         const totalNum = totalIdxF >= 0 ? num(String(l[totalIdxF] || "")) : 0;
         if (totalNum <= 0) return null;
-        const cad = cadMap[nome.toLowerCase()] || {};
+        const cad = cadMap[normNome(nome)] || {};
         return { nome, total: moeda(totalNum), total_num: totalNum, ...cad };
       })
       .filter(Boolean);
@@ -716,7 +724,7 @@ app.get("/admin/conferencia", verificarToken, verificarAdmin, async (req, res) =
     linhasC.forEach(l => {
       const nome = nomeIdxC >= 0 ? String(l[nomeIdxC] || "").trim() : "";
       if (!nome) return;
-      cadTelMap[nome.toLowerCase()] = telIdx >= 0 ? String(l[telIdx] || "").trim() : "";
+      cadTelMap[normNome(nome)] = telIdx >= 0 ? String(l[telIdx] || "").trim() : "";
     });
 
     // NFs ativas para o período (mais recente por entregador)
@@ -729,13 +737,13 @@ app.get("/admin/conferencia", verificarToken, verificarAdmin, async (req, res) =
       ORDER BY nf.user_id, nf.id DESC
     `;
     const nfByName = {};
-    nfRows.forEach(nf => { nfByName[(nf.user_name || nf.username).toLowerCase()] = nf; });
+    nfRows.forEach(nf => { nfByName[normNome(nf.user_name || nf.username)] = nf; });
 
     const result = linhas.map(l => {
       const nome = String(l[nomeIdx] || "").trim();
       if (!nome) return null;
       const totalNum = totalIdx >= 0 ? num(String(l[totalIdx] || "")) : 0;
-      const nf = nfByName[nome.toLowerCase()] || null;
+      const nf = nfByName[normNome(nome)] || null;
       let status = null;
       if (nf && totalNum > 0) {
         const nfNum = parseFloat(String(nf.valor || "").replace(/[R$\s.]/g, "").replace(",", ".")) || 0;
@@ -748,7 +756,7 @@ app.get("/admin/conferencia", verificarToken, verificarAdmin, async (req, res) =
         emitiu_nf: !!nf,
         valor_nf: nf ? nf.valor : null,
         status,
-        telefone: cadTelMap[nome.toLowerCase()] || ""
+        telefone: cadTelMap[normNome(nome)] || ""
       };
     }).filter(Boolean);
 
