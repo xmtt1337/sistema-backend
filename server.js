@@ -49,7 +49,7 @@ app.post("/login", async (req, res) => {
   const { username, password } = req.body;
   try {
     const user = await sql`SELECT * FROM users WHERE username = ${username}`;
-    if (!user.length || password !== user[0].password) {
+    if (!user.length || password !== user[0].password || user[0].active === false) {
       return res.json({ success: false });
     }
     const token = jwt.sign(
@@ -757,6 +757,60 @@ app.get("/nota/verificar", verificarToken, async (req, res) => {
   }
 });
 
+// ───── ADMIN USUÁRIOS ─────
+app.get("/admin/usuarios", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const rows = await sql`
+      SELECT id, username, role, COALESCE(active, TRUE) AS active
+      FROM users ORDER BY role, username
+    `;
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/admin/usuarios", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const { username, password, role } = req.body;
+    if (!username || !role) return res.status(400).json({ error: "Username e role são obrigatórios." });
+    const existing = await sql`SELECT id FROM users WHERE username = ${username}`;
+    if (existing.length) return res.status(400).json({ error: "Usuário já existe." });
+    const senha = (password || "").trim() || "GC2026";
+    const rows = await sql`
+      INSERT INTO users (username, password, role, active)
+      VALUES (${username}, ${senha}, ${role}, TRUE)
+      RETURNING id, username, role, active
+    `;
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/admin/usuarios/:id", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (id === req.user.id) return res.status(400).json({ error: "Não é possível alterar sua própria conta." });
+    const { active } = req.body;
+    await sql`UPDATE users SET active = ${active} WHERE id = ${id}`;
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/admin/usuarios/:id", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (id === req.user.id) return res.status(400).json({ error: "Não é possível deletar sua própria conta." });
+    await sql`DELETE FROM users WHERE id = ${id}`;
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete("/nota", verificarToken, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
@@ -797,6 +851,8 @@ async function initDB() {
   await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS valor_fechamento NUMERIC`;
   await sql`ALTER TABLE notas_fiscais ADD COLUMN IF NOT EXISTS deleted BOOLEAN DEFAULT FALSE`;
   await sql`ALTER TABLE notas_fiscais DROP CONSTRAINT IF EXISTS notas_fiscais_user_id_mes_ano_quinzena_key`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE`;
+  await sql`UPDATE users SET active = TRUE WHERE active IS NULL`;
 }
 
 const PORT = process.env.PORT || 3000;
