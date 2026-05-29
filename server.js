@@ -597,6 +597,62 @@ app.get("/test-db", async (req, res) => {
   }
 });
 
+app.get("/admin/conferencia", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const { mes, ano, quinzena } = req.query;
+
+    const planilha = await sql`
+      SELECT spreadsheet_id FROM planilhas_quinzena
+      WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+      LIMIT 1
+    `;
+    if (!planilha.length) return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
+
+    const { resumo } = await lerPlanilha(planilha[0].spreadsheet_id);
+    const cabecalho = (resumo[1] || []).map(c => String(c || "").trim().replace(/\n/g, " ").replace(/  +/g, " "));
+    const linhas    = resumo.slice(2);
+    const nomeIdx   = cabecalho.indexOf("NOME");
+    const totalIdx  = cabecalho.indexOf("TOTAL A RECEBER");
+    if (nomeIdx < 0) return res.status(500).json({ error: "Coluna NOME não encontrada." });
+
+    // NFs ativas para o período (mais recente por entregador)
+    const nfRows = await sql`
+      SELECT DISTINCT ON (nf.user_id) nf.*, u.username
+      FROM notas_fiscais nf
+      JOIN users u ON u.id = nf.user_id
+      WHERE nf.mes = ${parseInt(mes)} AND nf.ano = ${parseInt(ano)} AND nf.quinzena = ${parseInt(quinzena)}
+        AND (nf.deleted IS NULL OR nf.deleted = FALSE)
+      ORDER BY nf.user_id, nf.id DESC
+    `;
+    const nfByName = {};
+    nfRows.forEach(nf => { nfByName[nf.username.toLowerCase()] = nf; });
+
+    const result = linhas.map(l => {
+      const nome = String(l[nomeIdx] || "").trim();
+      if (!nome) return null;
+      const totalNum = totalIdx >= 0 ? num(String(l[totalIdx] || "")) : 0;
+      const nf = nfByName[nome.toLowerCase()] || null;
+      let status = null;
+      if (nf && totalNum > 0) {
+        const nfNum = parseFloat(String(nf.valor || "").replace(/[R$\s.]/g, "").replace(",", ".")) || 0;
+        if (nfNum > 0) status = Math.abs(nfNum - totalNum) < 0.02 ? "confere" : "diverge";
+      }
+      return {
+        nome,
+        total_receber: moeda(totalNum),
+        total_receber_num: totalNum,
+        emitiu_nf: !!nf,
+        valor_nf: nf ? nf.valor : null,
+        status
+      };
+    }).filter(Boolean);
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/admin/notas", verificarToken, verificarAdmin, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
