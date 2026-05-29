@@ -56,7 +56,7 @@ app.post("/login", async (req, res) => {
       return res.json({ success: false, inativo: true });
     }
     const token = jwt.sign(
-      { id: user[0].id, username: user[0].username, role: user[0].role },
+      { id: user[0].id, username: user[0].username, name: user[0].name, role: user[0].role },
       process.env.JWT_SECRET,
       { expiresIn: "8h" }
     );
@@ -161,7 +161,7 @@ async function lerPlanilha(spreadsheetId) {
 app.get("/painel", verificarToken, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
-    const nomeEntregador = req.user.username;
+    const nomeEntregador = req.user.name || req.user.username;
 
     const planilha = await sql`
       SELECT spreadsheet_id FROM planilhas_quinzena
@@ -551,7 +551,7 @@ app.get("/admin/historico", verificarToken, verificarAdmin, async (req, res) => 
 app.get("/historico", verificarToken, async (req, res) => {
   try {
     const { ano } = req.query;
-    const nomeEntregador = req.user.username;
+    const nomeEntregador = req.user.name || req.user.username;
 
     const planilhas = await sql`
       SELECT mes, quinzena, spreadsheet_id
@@ -620,7 +620,7 @@ app.get("/admin/conferencia", verificarToken, verificarAdmin, async (req, res) =
 
     // NFs ativas para o período (mais recente por entregador)
     const nfRows = await sql`
-      SELECT DISTINCT ON (nf.user_id) nf.*, u.username
+      SELECT DISTINCT ON (nf.user_id) nf.*, u.username, u.name AS user_name
       FROM notas_fiscais nf
       JOIN users u ON u.id = nf.user_id
       WHERE nf.mes = ${parseInt(mes)} AND nf.ano = ${parseInt(ano)} AND nf.quinzena = ${parseInt(quinzena)}
@@ -628,7 +628,7 @@ app.get("/admin/conferencia", verificarToken, verificarAdmin, async (req, res) =
       ORDER BY nf.user_id, nf.id DESC
     `;
     const nfByName = {};
-    nfRows.forEach(nf => { nfByName[nf.username.toLowerCase()] = nf; });
+    nfRows.forEach(nf => { nfByName[(nf.user_name || nf.username).toLowerCase()] = nf; });
 
     const result = linhas.map(l => {
       const nome = String(l[nomeIdx] || "").trim();
@@ -660,7 +660,7 @@ app.get("/admin/notas", verificarToken, verificarAdmin, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
     const rows = await sql`
-      SELECT DISTINCT ON (nf.user_id) nf.*, u.username
+      SELECT DISTINCT ON (nf.user_id) nf.*, u.username, u.name AS user_name
       FROM notas_fiscais nf
       JOIN users u ON u.id = nf.user_id
       WHERE nf.mes = ${parseInt(mes)} AND nf.ano = ${parseInt(ano)} AND nf.quinzena = ${parseInt(quinzena)}
@@ -737,7 +737,7 @@ app.get("/nota/verificar", verificarToken, async (req, res) => {
     const { chave_acesso, mes, ano, quinzena } = req.query;
     if (!chave_acesso) return res.json({ duplicata: false });
     const rows = await sql`
-      SELECT nf.mes, nf.ano, nf.quinzena, u.username
+      SELECT nf.mes, nf.ano, nf.quinzena, u.username, u.name AS user_name
       FROM notas_fiscais nf
       JOIN users u ON u.id = nf.user_id
       WHERE nf.chave_acesso = ${chave_acesso}
@@ -750,7 +750,7 @@ app.get("/nota/verificar", verificarToken, async (req, res) => {
     if (rows.length) {
       const r = rows[0];
       const meses = ["","Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
-      const detalhe = `${r.username} — ${r.quinzena}ª quinzena de ${meses[r.mes]}/${r.ano}`;
+      const detalhe = `${r.user_name || r.username} — ${r.quinzena}ª quinzena de ${meses[r.mes]}/${r.ano}`;
       res.json({ duplicata: true, detalhe });
     } else {
       res.json({ duplicata: false });
