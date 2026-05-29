@@ -775,14 +775,18 @@ app.get("/admin/usuarios", verificarToken, verificarAdmin, async (req, res) => {
 
 app.post("/admin/usuarios", verificarToken, verificarAdmin, async (req, res) => {
   try {
-    const { username, password, role } = req.body;
-    if (!username || !role) return res.status(400).json({ error: "Username e role são obrigatórios." });
-    const existing = await sql`SELECT id FROM users WHERE username = ${username}`;
-    if (existing.length) return res.status(400).json({ error: "Usuário já existe." });
+    const { password, role } = req.body;
     const senha = (password || "").trim() || "GC2026";
+    let username;
+    for (let i = 0; i < 10; i++) {
+      const candidate = "GC" + String(Math.floor(1000000 + Math.random() * 9000000));
+      const existing = await sql`SELECT id FROM users WHERE username = ${candidate}`;
+      if (!existing.length) { username = candidate; break; }
+    }
+    if (!username) return res.status(500).json({ error: "Não foi possível gerar um ID único. Tente novamente." });
     const rows = await sql`
       INSERT INTO users (username, password, role, active)
-      VALUES (${username}, ${senha}, ${role}, TRUE)
+      VALUES (${username}, ${senha}, ${role || "entregador"}, TRUE)
       RETURNING id, username, role, active
     `;
     res.json(rows[0]);
