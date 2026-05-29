@@ -872,6 +872,72 @@ async function initDB() {
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE`;
   await sql`UPDATE users SET active = TRUE WHERE active IS NULL`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT`;
+  await sql`CREATE TABLE IF NOT EXISTS seeds_run (seed_name TEXT PRIMARY KEY, ran_at TIMESTAMP DEFAULT NOW())`;
+
+  // ── Seed entregadores 2026 v1 ──
+  const seedCheck = await sql`SELECT seed_name FROM seeds_run WHERE seed_name = 'entregadores_2026_v1'`;
+  if (!seedCheck.length) {
+    await sql`DELETE FROM users WHERE role = 'entregador'`;
+    const defaultPwd = process.env.DEFAULT_PASSWORD || "GC2026";
+    const nomes = [
+      "Adaiane da Silva - Videira","Adilson da Silva - Monte Carlo","Alvaro de Freitas - Videira",
+      "Anderson de Andrade - Catanduvas","Anderson dos Santos Dolberth - Teixeira",
+      "Andre Luis Sima Peixoto - Tangará","Andre Luiz Camargo - Caçador","Andre Luiz Preto - Jaborá",
+      "Andre Ricardo Veiga - Caçador","Andrei de Siqueira - Videira","Andressa de Cassia Muller - Caçador",
+      "Andressa Zuíla de Britto - Treze Tílias","Brunna Thais Dallago - Videira","Bruno Teixeira - Teixeira",
+      "Claudicir Gonçalves dos Santos - Capinzal","Cleiton de Lima Sozo - Ponte Alta do Norte",
+      "Cleiton Locatelli - Caçador","Cleyton Carlin Pires - Caçador","Crenilson Alves - Fraiburgo",
+      "Daniele Ferreira dos Santos Cordeiro - Caçador","Deinisi Vendramini Lima - Caçador",
+      "Denisa Zago Meneguzzi - Iomere","Didio Moto Entrega - Concórdia","Diego Luan Pessoa - Caçador",
+      "Dionas Carlos Moreira - Videira","Edson da Silva Pereira - Fraiburgo",
+      "Elton Susin Rodrigues - Campos Novos","Emanuel Ronan Lazzari - Videira",
+      "Ewerlly Aires Cabral - Videira","Ezequiel de Maria - Herval D Oeste",
+      "Fabio Junior Padilha Dos Santos - Teixeira","Fernando Gregory Padilha - Videira",
+      "Fernando Junges - Joaçaba","Franciele Aparecida Correa - Caçador",
+      "Gabriel Alves dos Santos - Videira","Gabriel Henrique Gomes Brandino - Pinheiro Preto/Ibiam",
+      "Gabriel Lopes de Abreu - Ouro","Giezi luiz palavro - Erval Velho",
+      "Giovane Dobner Sentenario - Caçador","Giseli Cristina Aires - Videira",
+      "Guilherme Morais de Oliveira - Caçador","Guilherme Pereira Da Silva - Caçador",
+      "Igor Aires Cabral - Videira","Itamar Locatelli - Macieira","Jaison Ferreira Franca - FJ",
+      "Jean - Fraiburgo","Jhuan Richard Mendonca - Videira","João Maria Augusto Dave - Monte Carlo",
+      "Joao Vitor Alves dos Santos - Calmon","Jocelio Moreira de Souza Junior - Caçador",
+      "Jonathan Pereira de Lima - Caçador","Karine Mattos da Rosa - Caçador",
+      "Kaue Henrique Do Prado Dos Santos - Videira","Kelin Maiara dos Santos - Caçador",
+      "Kelvin Roberto Toffolo - Teixeira","Kristian de Mello Barbosa - Fraiburgo",
+      "Laercio - Taquara Verde","Leonardo Brusco - Caçador","Leonardo Reitel - Concórdia",
+      "Leonardo Vanin - Videira","Luana de Fatima Almeida - Videira","Lucas Teixeira Neto",
+      "Lucas Teixeira Neto - Curitibanos","Luiz Augusto da Rosa Granemann - Timbó Grande",
+      "Luiz Carlos dos santos - Rio das Antas","Luiz Carlos Moreira - Caçador",
+      "Luiz Ricardo Maurílio - Curitibanos","Maicon Antonio Ribeiro - Campos Novos",
+      "Marcelo Alves da Silva - Videira","Márcio Luiz da Cruz - Teixeira",
+      "Marcos Vinicius Hahn - Luiz RDA","Mauro Cesar - Caçador",
+      "Natanael De Oliveira Da Silva - Videira","Patricia Alves Schons Guzzi - Videira",
+      "Patricia Dias Martins Ribeiro - Santa Cecilia","Paulo Cesar Dave - Teixeira",
+      "Pedro Henrique Arruda Macedo - Lages","Rachel Simone Meneguzzi Manenti - Arroio Trinta",
+      "Rafael Comunello - Videira","Rafael Paizano Lourenço - Caçador",
+      "Rafaela Moraes Carneiro - Teixeira","Renato da Silva - Videira",
+      "Renato Gelson Coito de Borba - Fraiburgo","Riquelme Douglas Zipperer - Caçador",
+      "Ronaldo Recalcatti - Campos Novos","Samuel Mendes Guimaraes - Caçador",
+      "Sandro Santos de Souza - Água Doce","Sueli Luz de Lima - Caçador",
+      "Teresinha Fatima Borga de Almeida - Salto Veloso","Thalisson Diego Rizzo - Lebon Régis",
+      "Uillian Miotto - Videira","Victor Gabriel Pasternak - Caçador",
+      "William Marcos Neres - Videira","William Rodrigues - Teixeira",
+      "Gleison de Almeida","Victor Gleison - Videira","Adalberto Alves de Souza - Caçador",
+      "Giancarlo da Silva - Herval","Nilton Cezar Nascimento - Fraiburgo",
+      "Gabriel Antonio dos Santos - Capinzal","Cleivan Marcos Calvi - Catanduvas",
+      "Salete Borchardt - Fraiburgo"
+    ];
+    const existingIds = new Set((await sql`SELECT username FROM users`).map(u => u.username));
+    for (const name of nomes) {
+      let username;
+      do { username = "GC" + String(Math.floor(1000000 + Math.random() * 9000000)); }
+      while (existingIds.has(username));
+      existingIds.add(username);
+      await sql`INSERT INTO users (username, name, password, role, active) VALUES (${username}, ${name}, ${defaultPwd}, 'entregador', TRUE)`;
+    }
+    await sql`INSERT INTO seeds_run (seed_name) VALUES ('entregadores_2026_v1')`;
+    console.log("Seed entregadores_2026_v1 aplicado:", nomes.length, "entregadores.");
+  }
 }
 
 const PORT = process.env.PORT || 3000;
