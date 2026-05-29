@@ -202,7 +202,7 @@ app.get("/admin/pagamentos", verificarToken, verificarAdmin, async (req, res) =>
       }
     }
     const findCol = (keys) => cabC.findIndex(c => keys.some(k => c.includes(k)));
-    const nomeIdxC = findCol(["NOME", "ENTREGADOR"]);
+    const nomeIdxC = findCol(["USUARIO", "USUARIOS", "NOME", "ENTREGADOR"]);
     const docIdx   = findCol(["DOCUMENTO", "CPF", "CNPJ", "DOC"]);
     const pixIdx   = findCol(["CHAVE PIX", "CHAVE_PIX", "CHAVEPIX", "PIX"]);
     const tipoIdx  = findCol(["TIPO CHAVE", "TIPO PIX", "TIPO"]);
