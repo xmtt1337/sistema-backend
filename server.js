@@ -765,8 +765,8 @@ app.get("/admin/usuarios", verificarToken, verificarAdmin, async (req, res) => {
   try {
     const { role } = req.query;
     const rows = role
-      ? await sql`SELECT id, username, role, COALESCE(active, TRUE) AS active FROM users WHERE role = ${role} ORDER BY username`
-      : await sql`SELECT id, username, role, COALESCE(active, TRUE) AS active FROM users ORDER BY role, username`;
+      ? await sql`SELECT id, username, name, role, COALESCE(active, TRUE) AS active FROM users WHERE role = ${role} ORDER BY name, username`
+      : await sql`SELECT id, username, name, role, COALESCE(active, TRUE) AS active FROM users ORDER BY role, name, username`;
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -775,7 +775,8 @@ app.get("/admin/usuarios", verificarToken, verificarAdmin, async (req, res) => {
 
 app.post("/admin/usuarios", verificarToken, verificarAdmin, async (req, res) => {
   try {
-    const { password, role } = req.body;
+    const { name, password, role } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: "O nome do entregador é obrigatório." });
     const senha = (password || "").trim() || process.env.DEFAULT_PASSWORD || "GC2026";
     let username;
     for (let i = 0; i < 10; i++) {
@@ -785,9 +786,9 @@ app.post("/admin/usuarios", verificarToken, verificarAdmin, async (req, res) => 
     }
     if (!username) return res.status(500).json({ error: "Não foi possível gerar um ID único. Tente novamente." });
     const rows = await sql`
-      INSERT INTO users (username, password, role, active)
-      VALUES (${username}, ${senha}, ${role || "entregador"}, TRUE)
-      RETURNING id, username, role, active
+      INSERT INTO users (username, name, password, role, active)
+      VALUES (${username}, ${name.trim()}, ${senha}, ${role || "entregador"}, TRUE)
+      RETURNING id, username, name, role, active
     `;
     res.json(rows[0]);
   } catch (err) {
@@ -870,6 +871,7 @@ async function initDB() {
   await sql`ALTER TABLE notas_fiscais DROP CONSTRAINT IF EXISTS notas_fiscais_user_id_mes_ano_quinzena_key`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE`;
   await sql`UPDATE users SET active = TRUE WHERE active IS NULL`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT`;
 }
 
 const PORT = process.env.PORT || 3000;
