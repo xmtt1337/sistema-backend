@@ -776,7 +776,7 @@ app.get("/admin/usuarios", verificarToken, verificarAdmin, async (req, res) => {
 app.post("/admin/usuarios", verificarToken, verificarAdmin, async (req, res) => {
   try {
     const { password, role } = req.body;
-    const senha = (password || "").trim() || "GC2026";
+    const senha = (password || "").trim() || process.env.DEFAULT_PASSWORD || "GC2026";
     let username;
     for (let i = 0; i < 10; i++) {
       const candidate = "GC" + String(Math.floor(1000000 + Math.random() * 9000000));
@@ -807,12 +807,10 @@ app.patch("/admin/usuarios/:id", verificarToken, verificarAdmin, async (req, res
   }
 });
 
-app.put("/admin/usuarios/:id/senha", verificarToken, verificarAdmin, async (req, res) => {
+app.put("/admin/usuarios/:id/reset-senha", verificarToken, verificarAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { senha } = req.body;
-    if (!senha || senha.length < 4) return res.status(400).json({ error: "A senha deve ter pelo menos 4 caracteres." });
-    await sql`UPDATE users SET password = ${senha} WHERE id = ${id}`;
+    await sql`UPDATE users SET password = ${process.env.DEFAULT_PASSWORD || "GC2026"} WHERE id = ${id}`;
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
