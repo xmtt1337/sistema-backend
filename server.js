@@ -49,8 +49,11 @@ app.post("/login", async (req, res) => {
   const { username, password } = req.body;
   try {
     const user = await sql`SELECT * FROM users WHERE username = ${username}`;
-    if (!user.length || password !== user[0].password || user[0].active === false) {
+    if (!user.length || password !== user[0].password) {
       return res.json({ success: false });
+    }
+    if (user[0].active === false) {
+      return res.json({ success: false, inativo: true });
     }
     const token = jwt.sign(
       { id: user[0].id, username: user[0].username, role: user[0].role },
