@@ -172,9 +172,7 @@ async function lerCadastroPix() {
   const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS);
   const auth  = new google.auth.GoogleAuth({ credentials: creds, scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"] });
   const sheets = google.sheets({ version: "v4", auth });
-  const meta = await sheets.spreadsheets.get({ spreadsheetId: CADASTRO_PIX_ID });
-  const sheetName = meta.data.sheets[0].properties.title;
-  const r = await sheets.spreadsheets.values.get({ spreadsheetId: CADASTRO_PIX_ID, range: `${sheetName}!A:Z` });
+  const r = await sheets.spreadsheets.values.get({ spreadsheetId: CADASTRO_PIX_ID, range: "TERCEIRIZADOS!A:Z" });
   return r.data.values || [];
 }
 
