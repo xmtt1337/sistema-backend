@@ -391,7 +391,7 @@ app.get("/admin/entregadores", verificarToken, verificarAdmin, async (req, res) 
     const anjunIdx        = cabecalho.indexOf("ENTREGUES NO PRAZO ANJUN");
     const shopeeIdx       = cabecalho.indexOf("PACOTES ENTREGUES SPX");
 
-    const col = (l, idx) => idx >= 0 ? (inteiro(String(l[idx] || "")) || 0) : 0;
+    const col = (l, idx) => idx >= 0 ? (Math.round(num(String(l[idx] || ""))) || 0) : 0;
 
     const entregadores = linhas
       .map(l => {
