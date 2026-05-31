@@ -1020,6 +1020,7 @@ app.delete("/nota", verificarToken, async (req, res) => {
 });
 
 async function initDB() {
+  await sql`CREATE EXTENSION IF NOT EXISTS unaccent`;
   await sql`
     CREATE TABLE IF NOT EXISTS notas_fiscais (
       id            SERIAL PRIMARY KEY,
