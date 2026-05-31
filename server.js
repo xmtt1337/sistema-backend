@@ -996,7 +996,7 @@ app.post("/admin/trampay/importar", verificarToken, verificarAdmin, async (req, 
 app.get("/admin/trampay/entregadores", verificarToken, verificarAdmin, async (req, res) => {
   try {
     const rows = await sql`
-      SELECT id, nome, documento, id_externo, chave_pix, tipo_pix, data_criacao
+      SELECT id, nome, documento, id_externo, chave_pix, tipo_pix, data_criacao, updated_at
       FROM trampay_entregadores
       ORDER BY nome ASC
     `;
