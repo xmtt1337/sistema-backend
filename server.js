@@ -955,6 +955,32 @@ app.put("/admin/usuarios/reset-todas-senhas", verificarToken, verificarAdmin, as
   }
 });
 
+app.post("/admin/trampay/importar", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const { entregadores } = req.body;
+    if (!Array.isArray(entregadores) || !entregadores.length)
+      return res.status(400).json({ error: "Nenhum entregador no CSV." });
+
+    let atualizados = 0;
+    for (const e of entregadores) {
+      if (!e.nome) continue;
+      const result = await sql`
+        UPDATE users
+        SET documento     = ${e.documento     || null},
+            id_externo    = ${e.id_externo    || null},
+            chave_pix     = ${e.chave_pix     || null},
+            tipo_pix      = ${e.chave_pix_tipo|| null}
+        WHERE role = 'entregador'
+          AND LOWER(UNACCENT(name)) = LOWER(UNACCENT(${e.nome}))
+      `;
+      if (result.count > 0) atualizados++;
+    }
+    res.json({ success: true, atualizados });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete("/admin/usuarios/:id", verificarToken, verificarAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
