@@ -383,15 +383,32 @@ app.get("/admin/entregadores", verificarToken, verificarAdmin, async (req, res) 
       return res.status(500).json({ error: "Coluna NOME não encontrada na planilha." });
     }
 
-    const totalIdx = cabecalho.indexOf("TOTAL A RECEBER");
+    const totalIdx        = cabecalho.indexOf("TOTAL A RECEBER");
+    const entreguesIdx    = cabecalho.indexOf("TOTAL ENTREGUES");
+    const loggiIdx        = cabecalho.indexOf("ENTREGUES NO PRAZO LOGGI");
+    const jtIdx           = cabecalho.indexOf("ENTREGUES J&T");
+    const imileIdx        = cabecalho.indexOf("QTD IMILE");
+    const anjunIdx        = cabecalho.indexOf("ENTREGUES NO PRAZO ANJUN");
+    const shopeeIdx       = cabecalho.indexOf("PACOTES ENTREGUES SPX");
+
+    const col = (l, idx) => idx >= 0 ? (inteiro(String(l[idx] || "")) || 0) : 0;
 
     const entregadores = linhas
       .map(l => {
         const nome = String(l[nomeIdx] || "").trim();
         if (!nome) return null;
-        const totalRaw = totalIdx >= 0 ? String(l[totalIdx] || "") : "";
-        const totalNum = num(totalRaw);
-        return { nome, total_receber: moeda(totalNum), total_receber_num: totalNum };
+        const totalNum = totalIdx >= 0 ? num(String(l[totalIdx] || "")) : 0;
+        return {
+          nome,
+          total_receber:     moeda(totalNum),
+          total_receber_num: totalNum,
+          total_entregues:   col(l, entreguesIdx),
+          qtd_loggi:         col(l, loggiIdx),
+          qtd_jt:            col(l, jtIdx),
+          qtd_imile:         col(l, imileIdx),
+          qtd_anjun:         col(l, anjunIdx),
+          qtd_shopee:        col(l, shopeeIdx),
+        };
       })
       .filter(Boolean);
 
