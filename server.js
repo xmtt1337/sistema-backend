@@ -964,16 +964,28 @@ app.post("/admin/trampay/importar", verificarToken, verificarAdmin, async (req, 
     let atualizados = 0;
     for (const e of entregadores) {
       if (!e.nome) continue;
-      const result = await sql`
-        UPDATE users
-        SET documento     = ${e.documento     || null},
-            id_externo    = ${e.id_externo    || null},
-            chave_pix     = ${e.chave_pix     || null},
-            tipo_pix      = ${e.chave_pix_tipo|| null}
-        WHERE role = 'entregador'
-          AND LOWER(UNACCENT(name)) = LOWER(UNACCENT(${e.nome}))
+      const existing = await sql`
+        SELECT id FROM trampay_entregadores WHERE nome = ${e.nome}
       `;
-      if (result.count > 0) atualizados++;
+      if (existing.length) {
+        await sql`
+          UPDATE trampay_entregadores
+          SET documento    = ${e.documento      || null},
+              id_externo   = ${e.id_externo     || null},
+              chave_pix    = ${e.chave_pix      || null},
+              tipo_pix     = ${e.chave_pix_tipo || null},
+              data_criacao = ${e.data_criacao   || null},
+              updated_at   = NOW()
+          WHERE nome = ${e.nome}
+        `;
+      } else {
+        await sql`
+          INSERT INTO trampay_entregadores (nome, documento, id_externo, chave_pix, tipo_pix, data_criacao)
+          VALUES (${e.nome}, ${e.documento || null}, ${e.id_externo || null},
+                  ${e.chave_pix || null}, ${e.chave_pix_tipo || null}, ${e.data_criacao || null})
+        `;
+      }
+      atualizados++;
     }
     res.json({ success: true, atualizados });
   } catch (err) {
@@ -984,10 +996,9 @@ app.post("/admin/trampay/importar", verificarToken, verificarAdmin, async (req, 
 app.get("/admin/trampay/entregadores", verificarToken, verificarAdmin, async (req, res) => {
   try {
     const rows = await sql`
-      SELECT id, name, documento, id_externo, chave_pix, tipo_pix, active
-      FROM users
-      WHERE role = 'entregador'
-      ORDER BY name ASC
+      SELECT id, nome, documento, id_externo, chave_pix, tipo_pix, data_criacao
+      FROM trampay_entregadores
+      ORDER BY nome ASC
     `;
     res.json(rows);
   } catch (err) {
@@ -1050,6 +1061,19 @@ async function initDB() {
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE`;
   await sql`UPDATE users SET active = TRUE WHERE active IS NULL`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS trampay_entregadores (
+      id            SERIAL PRIMARY KEY,
+      nome          TEXT NOT NULL,
+      documento     TEXT,
+      id_externo    TEXT,
+      chave_pix     TEXT,
+      tipo_pix      TEXT,
+      data_criacao  TEXT,
+      created_at    TIMESTAMP DEFAULT NOW(),
+      updated_at    TIMESTAMP DEFAULT NOW()
+    )
+  `;
   await sql`CREATE TABLE IF NOT EXISTS seeds_run (seed_name TEXT PRIMARY KEY, ran_at TIMESTAMP DEFAULT NOW())`;
 
   // ── Seed entregadores 2026 v1 ──
