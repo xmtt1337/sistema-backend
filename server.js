@@ -186,9 +186,16 @@ app.get("/admin/pagamentos", verificarToken, verificarAdmin, async (req, res) =>
     `;
     if (!planilha.length) return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
 
-    const [{ resumo }, cadastroRows] = await Promise.all([
+    // ── ESQUEMA DE MATCH CHAVE PIX ──
+    // 1. RESUMO (col NOME) = usuario do sistema ex: "Deinisi Vendramini Lima - Caçador"
+    // 2. TERCEIRIZADOS col A (USUARIOS) = mesmo nome do sistema → col E (NOME) = nome real
+    // 3. nome real bate com trampay_entregadores.nome → pega chave_pix e tipo_pix da Trampay
+    // 4. documento vem da col DOCUMENTO do TERCEIRIZADOS
+
+    const [{ resumo }, cadastroRows, trampayRows] = await Promise.all([
       lerPlanilha(planilha[0].spreadsheet_id),
-      lerCadastroPix()
+      lerCadastroPix(),
+      sql`SELECT nome, chave_pix, tipo_pix FROM trampay_entregadores`
     ]);
 
     // ── Planilha de fechamento ──
@@ -197,31 +204,41 @@ app.get("/admin/pagamentos", verificarToken, verificarAdmin, async (req, res) =>
     const totalIdxF = cabF.indexOf("TOTAL A RECEBER");
     if (nomeIdxF < 0) return res.status(500).json({ error: "Coluna NOME não encontrada na planilha de fechamento." });
 
-    // ── Planilha de cadastro PIX ──
-    // Encontra a linha de cabeçalho (primeira linha não vazia)
+    // ── Planilha TERCEIRIZADOS ──
+    // Col A (USUARIOS) = nome do sistema | Col E (NOME) = nome real (igual ao da Trampay)
     let cabC = [], linhasC = [];
     for (let i = 0; i < Math.min(5, cadastroRows.length); i++) {
       if (cadastroRows[i]?.some(c => c && String(c).trim())) {
-        cabC   = cadastroRows[i].map(c => String(c || "").trim().toUpperCase());
+        cabC    = cadastroRows[i].map(c => String(c || "").trim().toUpperCase());
         linhasC = cadastroRows.slice(i + 1);
         break;
       }
     }
-    const findCol = (keys) => cabC.findIndex(c => keys.some(k => c.includes(k)));
-    const nomeIdxC = findCol(["USUARIO", "USUARIOS", "NOME", "ENTREGADOR"]);
-    const docIdx   = findCol(["DOCUMENTO", "CPF", "CNPJ", "DOC"]);
-    const pixIdx   = findCol(["CHAVE PIX", "CHAVE_PIX", "CHAVEPIX", "PIX"]);
-    const tipoIdx  = findCol(["TIPO CHAVE", "TIPO PIX", "TIPO"]);
+    const findCol    = (keys) => cabC.findIndex(c => keys.some(k => c.includes(k)));
+    const usuarioIdx = findCol(["USUARIO", "USUARIOS"]);
+    const nomeRealIdx= findCol(["NOME"]);
+    const docIdx     = findCol(["DOCUMENTO", "CPF", "CNPJ", "DOC"]);
 
+    // cadMap: usuario normalizado → { documento, nomeReal }
     const cadMap = {};
     linhasC.forEach(l => {
-      const nome = nomeIdxC >= 0 ? String(l[nomeIdxC] || "").trim() : "";
-      if (!nome) return;
-      cadMap[normNome(nome)] = {
-        documento: docIdx  >= 0 ? String(l[docIdx]  || "").trim() : "",
-        chave_pix: pixIdx  >= 0 ? String(l[pixIdx]  || "").trim() : "",
-        tipo_pix:  tipoIdx >= 0 ? String(l[tipoIdx] || "").trim() : "",
+      const usuario = usuarioIdx >= 0 ? String(l[usuarioIdx] || "").trim() : "";
+      if (!usuario) return;
+      cadMap[normNome(usuario)] = {
+        documento: docIdx      >= 0 ? String(l[docIdx]      || "").trim() : "",
+        nomeReal:  nomeRealIdx >= 0 ? String(l[nomeRealIdx] || "").trim() : "",
       };
+    });
+
+    // trampayMap: nome real normalizado → { chave_pix, tipo_pix }
+    function normBasico(s) {
+      return String(s || "").trim()
+        .normalize("NFD").replace(/[̀-ͯ]/g, "")
+        .toLowerCase().replace(/\s+/g, " ");
+    }
+    const trampayMap = {};
+    trampayRows.forEach(t => {
+      trampayMap[normBasico(t.nome)] = { chave_pix: t.chave_pix || "", tipo_pix: t.tipo_pix || "" };
     });
 
     const result = resumo.slice(2)
@@ -230,8 +247,16 @@ app.get("/admin/pagamentos", verificarToken, verificarAdmin, async (req, res) =>
         if (!nome) return null;
         const totalNum = totalIdxF >= 0 ? num(String(l[totalIdxF] || "")) : 0;
         if (totalNum <= 0) return null;
-        const cad = cadMap[normNome(nome)] || {};
-        return { nome, total: moeda(totalNum), total_num: totalNum, ...cad };
+        const cad      = cadMap[normNome(nome)] || {};
+        const trampay  = trampayMap[normBasico(cad.nomeReal || nome)] || {};
+        return {
+          nome,
+          total:     moeda(totalNum),
+          total_num: totalNum,
+          documento: cad.documento    || "",
+          chave_pix: trampay.chave_pix || "",
+          tipo_pix:  trampay.tipo_pix  || "",
+        };
       })
       .filter(Boolean);
 
