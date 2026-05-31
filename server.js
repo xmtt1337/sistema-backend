@@ -981,6 +981,20 @@ app.post("/admin/trampay/importar", verificarToken, verificarAdmin, async (req, 
   }
 });
 
+app.get("/admin/trampay/entregadores", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const rows = await sql`
+      SELECT id, name, documento, id_externo, chave_pix, tipo_pix, active
+      FROM users
+      WHERE role = 'entregador'
+      ORDER BY name ASC
+    `;
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete("/admin/usuarios/:id", verificarToken, verificarAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
