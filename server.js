@@ -257,9 +257,10 @@ app.get("/admin/pagamentos/csv", verificarToken, verificarAdmin, async (req, res
       sql`SELECT nome, id_externo, chave_pix, tipo_pix FROM trampay_entregadores`
     ]);
 
-    const cabF = (resumo[1] || []).map(c => String(c || "").trim().replace(/\n/g, " ").replace(/  +/g, " "));
-    const nomeIdxF  = cabF.indexOf("NOME");
-    const totalIdxF = cabF.indexOf("TOTAL A RECEBER");
+    const cabF       = (resumo[1] || []).map(c => String(c || "").trim().replace(/\n/g, " ").replace(/  +/g, " "));
+    const nomeIdxF   = cabF.indexOf("NOME");      // 1ª coluna NOME = usuario/titulo (com cidade)
+    const nomeTrampayIdx = cabF.lastIndexOf("NOME"); // 2ª coluna NOME = nome real pra buscar na Trampay
+    const totalIdxF  = cabF.indexOf("TOTAL A RECEBER");
     if (nomeIdxF < 0) return res.status(500).json({ error: "Coluna NOME não encontrada." });
 
     let cabC = [], linhasC = [];
@@ -281,14 +282,16 @@ app.get("/admin/pagamentos/csv", verificarToken, verificarAdmin, async (req, res
       cadMap[normNome(nome)] = { documento: docIdx >= 0 ? String(l[docIdx] || "").trim() : "" };
     });
 
-    function normSemCidade(s) {
-      const base = String(s || "").trim().split(/\s*[-–—]\s*/)[0].trim();
-      return base.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ");
+    // Trampay: indexado pelo nome normalizado (sem tirar cidade, o nome já vem certo)
+    function normBasico(s) {
+      return String(s || "").trim()
+        .normalize("NFD").replace(/[̀-ͯ]/g, "")
+        .toLowerCase().replace(/\s+/g, " ");
     }
 
     const trampayMap = {};
     trampayRows.forEach(t => {
-      trampayMap[normSemCidade(t.nome)] = {
+      trampayMap[normBasico(t.nome)] = {
         id_externo: t.id_externo || "",
         chave_pix:  t.chave_pix  || "",
         tipo_pix:   t.tipo_pix   || ""
@@ -296,25 +299,31 @@ app.get("/admin/pagamentos/csv", verificarToken, verificarAdmin, async (req, res
     });
 
     const MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
-    const nomeMes  = MESES[(parseInt(mes) || 1) - 1] || "";
-    const ordQ     = parseInt(quinzena) === 1 ? "primeira" : "segunda";
+    const nomeMes   = MESES[(parseInt(mes) || 1) - 1] || "";
+    const ordQ      = parseInt(quinzena) === 1 ? "primeira" : "segunda";
     const descricao = `Serviços prestados last mile ${ordQ} quinzena de ${nomeMes}`;
 
     const rows = resumo.slice(2).map(l => {
-      const nome = String(l[nomeIdxF] || "").trim();
-      if (!nome) return null;
+      const titulo = String(l[nomeIdxF] || "").trim();
+      if (!titulo) return null;
       const totalNum = totalIdxF >= 0 ? num(String(l[totalIdxF] || "")) : 0;
       if (totalNum <= 0) return null;
-      const cad     = cadMap[normNome(nome)] || {};
-      const trampay = trampayMap[normSemCidade(nome)] || {};
+
+      // Nome pra buscar na Trampay: usa 2ª coluna NOME se existir, senão o titulo
+      const nomeTrampay = nomeTrampayIdx !== nomeIdxF
+        ? String(l[nomeTrampayIdx] || "").trim()
+        : titulo;
+
+      const cad     = cadMap[normNome(titulo)] || cadMap[normNome(nomeTrampay)] || {};
+      const trampay = trampayMap[normBasico(nomeTrampay)] || {};
       return {
-        titulo:         nome,
-        documento:      cad.documento       || "",
+        titulo,
+        documento:      cad.documento      || "",
         valor:          totalNum.toFixed(2).replace(".", ","),
         descricao,
-        chave_pix:      trampay.chave_pix   || "",
-        chave_pix_tipo: trampay.tipo_pix    || "",
-        id:             trampay.id_externo  || "",
+        chave_pix:      trampay.chave_pix  || "",
+        chave_pix_tipo: trampay.tipo_pix   || "",
+        id:             trampay.id_externo || "",
       };
     }).filter(Boolean);
 
