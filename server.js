@@ -1112,7 +1112,7 @@ app.post("/admin/trampay/importar", verificarToken, verificarAdmin, async (req, 
     if (!Array.isArray(entregadores) || !entregadores.length)
       return res.status(400).json({ error: "Nenhum entregador no CSV." });
 
-    let atualizados = 0;
+    let atualizados = 0, novos = 0;
     for (const e of entregadores) {
       if (!e.nome) continue;
       const existing = await sql`
@@ -1129,16 +1129,17 @@ app.post("/admin/trampay/importar", verificarToken, verificarAdmin, async (req, 
               updated_at   = NOW()
           WHERE nome = ${e.nome}
         `;
+        atualizados++;
       } else {
         await sql`
           INSERT INTO trampay_entregadores (nome, documento, id_externo, chave_pix, tipo_pix, data_criacao)
           VALUES (${e.nome}, ${e.documento || null}, ${e.id_externo || null},
                   ${e.chave_pix || null}, ${e.chave_pix_tipo || null}, ${e.data_criacao || null})
         `;
+        novos++;
       }
-      atualizados++;
     }
-    res.json({ success: true, atualizados });
+    res.json({ success: true, atualizados, novos });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1147,7 +1148,8 @@ app.post("/admin/trampay/importar", verificarToken, verificarAdmin, async (req, 
 app.get("/admin/trampay/entregadores", verificarToken, verificarAdmin, async (req, res) => {
   try {
     const rows = await sql`
-      SELECT id, nome, documento, id_externo, chave_pix, tipo_pix, data_criacao, updated_at
+      SELECT id, nome, documento, id_externo, chave_pix, tipo_pix, data_criacao,
+             (SELECT MAX(updated_at) FROM trampay_entregadores) AS last_import
       FROM trampay_entregadores
       ORDER BY nome ASC
     `;
