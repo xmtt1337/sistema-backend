@@ -257,12 +257,14 @@ app.get("/admin/pagamentos/csv", verificarToken, verificarAdmin, async (req, res
       sql`SELECT nome, id_externo, chave_pix, tipo_pix FROM trampay_entregadores`
     ]);
 
-    const cabF       = (resumo[1] || []).map(c => String(c || "").trim().replace(/\n/g, " ").replace(/  +/g, " "));
-    const nomeIdxF   = cabF.indexOf("NOME");      // 1ª coluna NOME = usuario/titulo (com cidade)
-    const nomeTrampayIdx = cabF.lastIndexOf("NOME"); // 2ª coluna NOME = nome real pra buscar na Trampay
-    const totalIdxF  = cabF.indexOf("TOTAL A RECEBER");
+    const cabF      = (resumo[1] || []).map(c => String(c || "").trim().replace(/\n/g, " ").replace(/  +/g, " "));
+    const nomeIdxF  = cabF.indexOf("NOME");
+    const totalIdxF = cabF.indexOf("TOTAL A RECEBER");
     if (nomeIdxF < 0) return res.status(500).json({ error: "Coluna NOME não encontrada." });
 
+    // ── Lê planilha TERCEIRIZADOS ──
+    // Coluna "usuarios" (A) = nome do sistema (igual ao da planilha RESUMO)
+    // Coluna "Nome" (E)     = nome real igual ao cadastrado na Trampay
     let cabC = [], linhasC = [];
     for (let i = 0; i < Math.min(5, cadastroRows.length); i++) {
       if (cadastroRows[i]?.some(c => c && String(c).trim())) {
@@ -271,24 +273,29 @@ app.get("/admin/pagamentos/csv", verificarToken, verificarAdmin, async (req, res
         break;
       }
     }
-    const findCol  = (keys) => cabC.findIndex(c => keys.some(k => c.includes(k)));
-    const nomeIdxC = findCol(["USUARIO","USUARIOS","NOME","ENTREGADOR"]);
-    const docIdx   = findCol(["DOCUMENTO","CPF","CNPJ","DOC"]);
+    const findCol    = (keys) => cabC.findIndex(c => keys.some(k => c.includes(k)));
+    const usuarioIdx = findCol(["USUARIO","USUARIOS"]);
+    const nomeRealIdx= findCol(["NOME"]);
+    const docIdx     = findCol(["DOCUMENTO","CPF","CNPJ","DOC"]);
 
+    // cadMap: chave = usuario normalizado → { documento, nomeReal }
     const cadMap = {};
     linhasC.forEach(l => {
-      const nome = nomeIdxC >= 0 ? String(l[nomeIdxC] || "").trim() : "";
-      if (!nome) return;
-      cadMap[normNome(nome)] = { documento: docIdx >= 0 ? String(l[docIdx] || "").trim() : "" };
+      const usuario = usuarioIdx >= 0 ? String(l[usuarioIdx] || "").trim() : "";
+      if (!usuario) return;
+      cadMap[normNome(usuario)] = {
+        documento: docIdx      >= 0 ? String(l[docIdx]      || "").trim() : "",
+        nomeReal:  nomeRealIdx >= 0 ? String(l[nomeRealIdx] || "").trim() : "",
+      };
     });
 
-    // Trampay: indexado pelo nome normalizado (sem tirar cidade, o nome já vem certo)
     function normBasico(s) {
       return String(s || "").trim()
         .normalize("NFD").replace(/[̀-ͯ]/g, "")
         .toLowerCase().replace(/\s+/g, " ");
     }
 
+    // trampayMap: chave = nome real normalizado → { id_externo, chave_pix, tipo_pix }
     const trampayMap = {};
     trampayRows.forEach(t => {
       trampayMap[normBasico(t.nome)] = {
@@ -298,9 +305,9 @@ app.get("/admin/pagamentos/csv", verificarToken, verificarAdmin, async (req, res
       };
     });
 
-    const MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
-    const nomeMes   = MESES[(parseInt(mes) || 1) - 1] || "";
-    const ordQ      = parseInt(quinzena) === 1 ? "primeira" : "segunda";
+    const MESES    = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+    const nomeMes  = MESES[(parseInt(mes) || 1) - 1] || "";
+    const ordQ     = parseInt(quinzena) === 1 ? "primeira" : "segunda";
     const descricao = `Serviços prestados last mile ${ordQ} quinzena de ${nomeMes}`;
 
     const rows = resumo.slice(2).map(l => {
@@ -309,16 +316,16 @@ app.get("/admin/pagamentos/csv", verificarToken, verificarAdmin, async (req, res
       const totalNum = totalIdxF >= 0 ? num(String(l[totalIdxF] || "")) : 0;
       if (totalNum <= 0) return null;
 
-      // Nome pra buscar na Trampay: usa 2ª coluna NOME se existir, senão o titulo
-      const nomeTrampay = nomeTrampayIdx !== nomeIdxF
-        ? String(l[nomeTrampayIdx] || "").trim()
-        : titulo;
+      // Busca no TERCEIRIZADOS pelo nome do sistema → pega nomeReal e documento
+      const cad        = cadMap[normNome(titulo)] || {};
+      const nomeTrampay = cad.nomeReal || titulo;
 
-      const cad     = cadMap[normNome(titulo)] || cadMap[normNome(nomeTrampay)] || {};
+      // Busca na Trampay pelo nomeReal
       const trampay = trampayMap[normBasico(nomeTrampay)] || {};
+
       return {
         titulo,
-        documento:      cad.documento      || "",
+        documento:      cad.documento     || "",
         valor:          totalNum.toFixed(2).replace(".", ","),
         descricao,
         chave_pix:      trampay.chave_pix  || "",
