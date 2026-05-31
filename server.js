@@ -334,10 +334,21 @@ app.get("/admin/pagamentos/csv", verificarToken, verificarAdmin, async (req, res
       };
     }).filter(Boolean);
 
+    const txt  = v => `"${String(v).replace(/"/g,'""')}"`;
+    const num_ = v => v ? `="${String(v).replace(/"/g,'""')}"` : `""`;
+
     const header   = ["titulo","documento","valor","descricao","chave_pix","chave_pix_tipo","id"];
     const csvLines = [
       header.join(";"),
-      ...rows.map(r => header.map(k => `"${String(r[k]).replace(/"/g,'""')}"`).join(";"))
+      ...rows.map(r => [
+        txt(r.titulo),
+        num_(r.documento),
+        txt(r.valor),
+        txt(r.descricao),
+        num_(r.chave_pix),
+        txt(r.chave_pix_tipo),
+        num_(r.id),
+      ].join(";"))
     ];
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
