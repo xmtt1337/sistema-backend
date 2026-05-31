@@ -926,6 +926,18 @@ app.put("/admin/usuarios/:id/reset-senha", verificarToken, verificarAdmin, async
   }
 });
 
+app.put("/admin/usuarios/reset-todas-senhas", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const result = await sql`
+      UPDATE users SET password = ${process.env.DEFAULT_PASSWORD || "GC2026"}
+      WHERE role = 'entregador'
+    `;
+    res.json({ success: true, total: result.count });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete("/admin/usuarios/:id", verificarToken, verificarAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
