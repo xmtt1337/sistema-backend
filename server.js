@@ -94,6 +94,14 @@ app.post("/redefinir-senha", async (req, res) => {
   }
 });
 
+// Nomes excluídos de todos os resultados que vêm das planilhas
+const NOMES_IGNORADOS = new Set([
+  "lucas teixeira neto - curitibanos",
+]);
+function nomeIgnorado(nome) {
+  return NOMES_IGNORADOS.has(normNome(nome));
+}
+
 function normNome(s) {
   return String(s || "").trim()
     .replace(/[–—−‑]/g, "-")
@@ -244,7 +252,7 @@ app.get("/admin/pagamentos", verificarToken, verificarAdmin, async (req, res) =>
     const result = resumo.slice(2)
       .map(l => {
         const nome = String(l[nomeIdxF] || "").trim();
-        if (!nome) return null;
+        if (!nome || nomeIgnorado(nome)) return null;
         const totalNum = totalIdxF >= 0 ? num(String(l[totalIdxF] || "")) : 0;
         if (totalNum <= 0) return null;
         const cad      = cadMap[normNome(nome)] || {};
@@ -337,7 +345,7 @@ app.get("/admin/pagamentos/csv", verificarToken, verificarAdmin, async (req, res
 
     const rows = resumo.slice(2).map(l => {
       const titulo = String(l[nomeIdxF] || "").trim();
-      if (!titulo) return null;
+      if (!titulo || nomeIgnorado(titulo)) return null;
       const totalNum = totalIdxF >= 0 ? num(String(l[totalIdxF] || "")) : 0;
       if (totalNum <= 0) return null;
 
@@ -539,7 +547,7 @@ app.get("/admin/entregadores", verificarToken, verificarAdmin, async (req, res) 
     const entregadores = linhas
       .map(l => {
         const nome = String(l[nomeIdx] || "").trim();
-        if (!nome) return null;
+        if (!nome || nomeIgnorado(nome)) return null;
         const totalNum = totalIdx >= 0 ? num(String(l[totalIdx] || "")) : 0;
         return {
           nome,
@@ -899,7 +907,7 @@ app.get("/admin/conferencia", verificarToken, verificarAdmin, async (req, res) =
 
     const result = linhas.map(l => {
       const nome = String(l[nomeIdx] || "").trim();
-      if (!nome) return null;
+      if (!nome || nomeIgnorado(nome)) return null;
       const totalNum = totalIdx >= 0 ? num(String(l[totalIdx] || "")) : 0;
       const nf = nfByName[normNome(nome)] || null;
       let status = null;
