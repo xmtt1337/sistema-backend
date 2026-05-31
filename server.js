@@ -241,6 +241,97 @@ app.get("/admin/pagamentos", verificarToken, verificarAdmin, async (req, res) =>
   }
 });
 
+app.get("/admin/pagamentos/csv", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const { mes, ano, quinzena } = req.query;
+    const planilha = await sql`
+      SELECT spreadsheet_id FROM planilhas_quinzena
+      WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+      LIMIT 1
+    `;
+    if (!planilha.length) return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
+
+    const [{ resumo }, cadastroRows, trampayRows] = await Promise.all([
+      lerPlanilha(planilha[0].spreadsheet_id),
+      lerCadastroPix(),
+      sql`SELECT nome, id_externo, chave_pix, tipo_pix FROM trampay_entregadores`
+    ]);
+
+    const cabF = (resumo[1] || []).map(c => String(c || "").trim().replace(/\n/g, " ").replace(/  +/g, " "));
+    const nomeIdxF  = cabF.indexOf("NOME");
+    const totalIdxF = cabF.indexOf("TOTAL A RECEBER");
+    if (nomeIdxF < 0) return res.status(500).json({ error: "Coluna NOME não encontrada." });
+
+    let cabC = [], linhasC = [];
+    for (let i = 0; i < Math.min(5, cadastroRows.length); i++) {
+      if (cadastroRows[i]?.some(c => c && String(c).trim())) {
+        cabC    = cadastroRows[i].map(c => String(c || "").trim().toUpperCase());
+        linhasC = cadastroRows.slice(i + 1);
+        break;
+      }
+    }
+    const findCol  = (keys) => cabC.findIndex(c => keys.some(k => c.includes(k)));
+    const nomeIdxC = findCol(["USUARIO","USUARIOS","NOME","ENTREGADOR"]);
+    const docIdx   = findCol(["DOCUMENTO","CPF","CNPJ","DOC"]);
+
+    const cadMap = {};
+    linhasC.forEach(l => {
+      const nome = nomeIdxC >= 0 ? String(l[nomeIdxC] || "").trim() : "";
+      if (!nome) return;
+      cadMap[normNome(nome)] = { documento: docIdx >= 0 ? String(l[docIdx] || "").trim() : "" };
+    });
+
+    function normSemCidade(s) {
+      const base = String(s || "").trim().split(/\s*[-–—]\s*/)[0].trim();
+      return base.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ");
+    }
+
+    const trampayMap = {};
+    trampayRows.forEach(t => {
+      trampayMap[normSemCidade(t.nome)] = {
+        id_externo: t.id_externo || "",
+        chave_pix:  t.chave_pix  || "",
+        tipo_pix:   t.tipo_pix   || ""
+      };
+    });
+
+    const MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+    const nomeMes  = MESES[(parseInt(mes) || 1) - 1] || "";
+    const ordQ     = parseInt(quinzena) === 1 ? "primeira" : "segunda";
+    const descricao = `Serviços prestados last mile ${ordQ} quinzena de ${nomeMes}`;
+
+    const rows = resumo.slice(2).map(l => {
+      const nome = String(l[nomeIdxF] || "").trim();
+      if (!nome) return null;
+      const totalNum = totalIdxF >= 0 ? num(String(l[totalIdxF] || "")) : 0;
+      if (totalNum <= 0) return null;
+      const cad     = cadMap[normNome(nome)] || {};
+      const trampay = trampayMap[normSemCidade(nome)] || {};
+      return {
+        titulo:         nome,
+        documento:      cad.documento       || "",
+        valor:          totalNum.toFixed(2).replace(".", ","),
+        descricao,
+        chave_pix:      trampay.chave_pix   || "",
+        chave_pix_tipo: trampay.tipo_pix    || "",
+        id:             trampay.id_externo  || "",
+      };
+    }).filter(Boolean);
+
+    const header   = ["titulo","documento","valor","descricao","chave_pix","chave_pix_tipo","id"];
+    const csvLines = [
+      header.join(";"),
+      ...rows.map(r => header.map(k => `"${String(r[k]).replace(/"/g,'""')}"`).join(";"))
+    ];
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="pagamentos_${mes}_${ano}_q${quinzena}.csv"`);
+    res.send("﻿" + csvLines.join("\r\n"));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/painel", verificarToken, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
