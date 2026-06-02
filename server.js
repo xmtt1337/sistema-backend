@@ -807,7 +807,7 @@ app.get("/historico", verificarToken, async (req, res) => {
     const planilhas = await sql`
       SELECT mes, quinzena, spreadsheet_id
       FROM planilhas_quinzena
-      WHERE ano = ${parseInt(ano)}
+      WHERE ano = ${parseInt(ano)} AND (ignora_nf IS NULL OR ignora_nf = false)
       ORDER BY mes ASC, quinzena ASC
     `;
     if (!planilhas.length) return res.json([]);
@@ -1221,6 +1221,14 @@ async function initDB() {
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE`;
   await sql`UPDATE users SET active = TRUE WHERE active IS NULL`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT`;
+  await sql`ALTER TABLE planilhas_quinzena ADD COLUMN IF NOT EXISTS ignora_nf BOOLEAN DEFAULT false`;
+  await sql`
+    UPDATE planilhas_quinzena SET ignora_nf = true
+    WHERE spreadsheet_id IN (
+      '18GBldV9YE0lQXxabIzsn0rAZq57F9h_MgeAnoBDloPk',
+      '1XjmtzeSTxOuJvvsIkiaIF3XvPEC-k1fVTM9R9ZG5B9Y'
+    )
+  `;
   await sql`
     CREATE TABLE IF NOT EXISTS trampay_entregadores (
       id            SERIAL PRIMARY KEY,
