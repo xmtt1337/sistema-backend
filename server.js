@@ -805,9 +805,9 @@ app.get("/historico", verificarToken, async (req, res) => {
     const nomeEntregador = req.user.name || req.user.username;
 
     const planilhas = await sql`
-      SELECT mes, quinzena, spreadsheet_id
+      SELECT mes, quinzena, spreadsheet_id, ignora_nf
       FROM planilhas_quinzena
-      WHERE ano = ${parseInt(ano)} AND (ignora_nf IS NULL OR ignora_nf = false)
+      WHERE ano = ${parseInt(ano)}
       ORDER BY mes ASC, quinzena ASC
     `;
     if (!planilhas.length) return res.json([]);
@@ -823,7 +823,7 @@ app.get("/historico", verificarToken, async (req, res) => {
         if (!linha) return null;
         const get = col => { const i = cabecalho.indexOf(col); return i >= 0 ? String(linha[i] || "") : ""; };
         return {
-          mes: p.mes, quinzena: p.quinzena,
+          mes: p.mes, quinzena: p.quinzena, ignora_nf: p.ignora_nf || false,
           total_receber_num: num(get("TOTAL A RECEBER")),
           total_entregues:   Math.round(num(get("TOTAL ENTREGUES"))),
           entregues_loggi:   Math.round(num(get("ENTREGUES NO PRAZO LOGGI"))),
