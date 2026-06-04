@@ -1260,6 +1260,13 @@ app.post("/alimentar/upload", verificarToken, verificarNaoEntregador, async (req
     if (!validas.includes(transportadora))
       return res.status(400).json({ error: "Transportadora inválida." });
     const tamanho_bytes = Math.round(conteudo_base64.length * 0.75);
+    // Remove arquivo anterior da mesma transportadora (um por transportadora)
+    const existentes = await sql`SELECT id FROM alimentar_arquivos WHERE transportadora = ${transportadora}`;
+    for (const e of existentes) {
+      await sql`DELETE FROM alimentar_pacotes WHERE arquivo_id = ${e.id}`;
+      await sql`DELETE FROM alimentar_arquivos WHERE id = ${e.id}`;
+    }
+
     const rows = await sql`
       INSERT INTO alimentar_arquivos (transportadora, nome_arquivo, conteudo_base64, mime_type, tamanho_bytes, uploaded_by)
       VALUES (${transportadora}, ${nome_arquivo}, ${conteudo_base64}, ${mime_type || null}, ${tamanho_bytes}, ${req.user.id})
