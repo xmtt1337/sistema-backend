@@ -1392,6 +1392,33 @@ async function buscarEntregadorPorCep(cep, transportadora) {
   }
 }
 
+app.get("/bipagem/buscar-cep", verificarToken, verificarNaoEntregador, async (req, res) => {
+  try {
+    const { cep } = req.query;
+    if (!cep) return res.status(400).json({ error: "CEP não informado." });
+    const cepNorm = String(cep).replace(/\D/g, "").padStart(8, "0");
+
+    let rows = await sql`
+      SELECT entregador, cidade, bairro, rua, sigla, transportadora
+      FROM cep_entregadores
+      WHERE cep = ${cepNorm}
+      ORDER BY transportadora
+    `;
+
+    // Fallback planilha se banco vazio
+    if (!rows.length) {
+      const linhas = await lerTodasAbasCeps();
+      const matches = linhas.filter(l => l.cep.padStart(8, "0") === cepNorm);
+      rows = matches.map(l => ({ ...l, transportadora: normalizarAba(l.aba) }));
+    }
+
+    if (!rows.length) return res.status(404).json({ error: "CEP não encontrado em nenhuma transportadora." });
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/bipagem/cep-status", verificarToken, verificarNaoEntregador, async (req, res) => {
   try {
     const r = await sql`SELECT COUNT(*) AS total FROM cep_entregadores`;
