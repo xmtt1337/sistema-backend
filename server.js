@@ -1326,19 +1326,21 @@ async function lerTodasAbasCeps() {
   const abas  = meta.data.sheets.map(s => s.properties.title);
 
   const resultado = [];
+  const errosAbas = [];
   for (const aba of abas) {
     try {
-      const r    = await sheets.spreadsheets.values.get({ spreadsheetId: CEP_SHEET_ID, range: `'${aba}'!A:F` });
+      const r    = await sheets.spreadsheets.values.get({ spreadsheetId: CEP_SHEET_ID, range: `'${aba}'!A:Z` });
       const rows = r.data.values || [];
-      if (rows.length < 2) continue;
-      const header = rows[0].map(c => String(c || "").trim().toLowerCase());
+      if (rows.length < 2) { errosAbas.push(`${aba}: menos de 2 linhas`); continue; }
+      const headerRaw = rows[0];
+      const header = headerRaw.map(c => String(c || "").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, ""));
       const cepIdx = header.findIndex(h => h === "cep");
-      const entIdx = header.findIndex(h => h === "entregador");
-      const cidIdx = header.findIndex(h => h === "cidade");
-      const baiIdx = header.findIndex(h => h === "bairro");
-      const ruaIdx = header.findIndex(h => h === "rua");
-      const sigIdx = header.findIndex(h => h === "sigla");
-      if (cepIdx < 0) continue;
+      const entIdx = header.findIndex(h => h.includes("entregador"));
+      const cidIdx = header.findIndex(h => h.includes("cidade"));
+      const baiIdx = header.findIndex(h => h.includes("bairro"));
+      const ruaIdx = header.findIndex(h => h.includes("rua"));
+      const sigIdx = header.findIndex(h => h.includes("sigla"));
+      if (cepIdx < 0) { errosAbas.push(`${aba}: coluna CEP não encontrada (headers: ${headerRaw.join("|")})`); continue; }
       for (let i = 1; i < rows.length; i++) {
         const row = rows[i];
         if (row.some(c => String(c).includes("#REF"))) continue;
@@ -1354,9 +1356,13 @@ async function lerTodasAbasCeps() {
           aba,
         });
       }
-    } catch { /* pula abas com erro */ }
+    } catch (err) {
+      errosAbas.push(`${aba}: ${err.message}`);
+    }
   }
+  if (errosAbas.length) console.warn("Abas com erro no sync:", errosAbas);
 
+  resultado._erros  = errosAbas;
   _cepCache   = resultado;
   _cepCacheAt = Date.now();
   return resultado;
@@ -1472,7 +1478,7 @@ app.post("/admin/sincronizar-ceps", verificarToken, verificarAdmin, async (req, 
         acc[k] = (acc[k] || 0) + 1;
         return acc;
       }, {});
-      res.json({ success: true, total: linhas.length, por_transportadora: porAba });
+      res.json({ success: true, total: linhas.length, por_transportadora: porAba, erros: linhas._erros || [] });
     } catch (err) {
       await client.query("ROLLBACK");
       throw err;
