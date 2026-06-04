@@ -1330,11 +1330,14 @@ function normalizarAba(aba) {
   return aba;
 }
 
-async function buscarEntregadorPorCep(cep) {
+async function buscarEntregadorPorCep(cep, transportadora) {
   try {
-    const cepNorm = String(cep).replace(/\D/g, "").padStart(8, "0");
-    const linhas  = await lerTodasAbasCeps();
-    const match   = linhas.find(l => l.cep.padStart(8, "0") === cepNorm);
+    const cepNorm    = String(cep).replace(/\D/g, "").padStart(8, "0");
+    const linhas     = await lerTodasAbasCeps();
+    const candidatos = transportadora
+      ? linhas.filter(l => normalizarAba(l.aba) === transportadora)
+      : linhas;
+    const match = candidatos.find(l => l.cep.padStart(8, "0") === cepNorm);
     if (!match) return null;
     return { ...match, transportadora: normalizarAba(match.aba) };
   } catch (err) {
@@ -1376,7 +1379,7 @@ app.get("/bipagem/buscar", verificarToken, verificarNaoEntregador, async (req, r
     let bairro = null, sigla = null, rua = null;
 
     if (p.cep) {
-      const match = await buscarEntregadorPorCep(p.cep);
+      const match = await buscarEntregadorPorCep(p.cep, p.transportadora);
       if (match) {
         if (match.entregador)    entregador  = match.entregador;
         if (match.cidade)        cidadeMatch = match.cidade;
