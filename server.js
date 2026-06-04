@@ -1522,17 +1522,35 @@ app.get("/bipagem/buscar", verificarToken, verificarNaoEntregador, async (req, r
     }
 
     const p = rows[0];
+
+    // Se o código tem 8 dígitos, sem cep e sem transportadora úteis,
+    // é provável que foi salvo errado (CEP no lugar do barcode). Trata como CEP.
+    const soDigitos = c.replace(/\D/g, "");
+    if (soDigitos.length === 8 && !p.cep && !p.transportadora) {
+      const cepNorm2 = soDigitos.padStart(8, "0");
+      let cepRows = await sql`
+        SELECT entregador, cidade, bairro, rua, sigla, transportadora
+        FROM cep_entregadores WHERE cep = ${cepNorm2} ORDER BY transportadora
+      `;
+      if (!cepRows.length) {
+        const linhas = await lerTodasAbasCeps();
+        cepRows = linhas
+          .filter(l => l.cep.padStart(8, "0") === cepNorm2)
+          .map(l => ({ ...l, transportadora: normalizarAba(l.aba) }));
+      }
+      if (cepRows.length) return res.json({ tipo: "cep", resultados: cepRows });
+    }
+
     let entregador = null;
     let cidadeMatch = p.cidade;
     let transpMatch = p.transportadora;
-
     let bairro = null, sigla = null, rua = null;
 
     if (p.cep) {
       const match = await buscarEntregadorPorCep(p.cep, p.transportadora);
       if (match) {
-        if (match.entregador)    entregador  = match.entregador;
-        if (match.cidade)        cidadeMatch = match.cidade;
+        if (match.entregador)     entregador  = match.entregador;
+        if (match.cidade)         cidadeMatch = match.cidade;
         if (match.transportadora) transpMatch = match.transportadora;
         bairro = match.bairro || null;
         sigla  = match.sigla  || null;
