@@ -13,7 +13,7 @@ const ORIGENS_PERMITIDAS = [
 ];
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || ORIGENS_PERMITIDAS.includes(origin)) {
@@ -1190,6 +1190,68 @@ app.delete("/nota", verificarToken, async (req, res) => {
   }
 });
 
+function verificarNaoEntregador(req, res, next) {
+  if (req.user.role === 'entregador') return res.status(403).json({ error: 'Acesso negado' });
+  next();
+}
+
+// ───── ALIMENTAR ─────
+
+app.get("/alimentar/arquivos", verificarToken, verificarNaoEntregador, async (req, res) => {
+  try {
+    const { transportadora } = req.query;
+    const rows = transportadora
+      ? await sql`SELECT id, transportadora, nome_arquivo, mime_type, tamanho_bytes, uploaded_at FROM alimentar_arquivos WHERE transportadora = ${transportadora} ORDER BY uploaded_at DESC`
+      : await sql`SELECT id, transportadora, nome_arquivo, mime_type, tamanho_bytes, uploaded_at FROM alimentar_arquivos ORDER BY transportadora, uploaded_at DESC`;
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/alimentar/upload", verificarToken, verificarNaoEntregador, async (req, res) => {
+  try {
+    const { transportadora, nome_arquivo, conteudo_base64, mime_type } = req.body;
+    if (!transportadora || !nome_arquivo || !conteudo_base64)
+      return res.status(400).json({ error: "Dados incompletos." });
+    const validas = ['loggi', 'anjun', 'jt', 'imile'];
+    if (!validas.includes(transportadora))
+      return res.status(400).json({ error: "Transportadora inválida." });
+    const tamanho_bytes = Math.round(conteudo_base64.length * 0.75);
+    const rows = await sql`
+      INSERT INTO alimentar_arquivos (transportadora, nome_arquivo, conteudo_base64, mime_type, tamanho_bytes, uploaded_by)
+      VALUES (${transportadora}, ${nome_arquivo}, ${conteudo_base64}, ${mime_type || null}, ${tamanho_bytes}, ${req.user.id})
+      RETURNING id, transportadora, nome_arquivo, mime_type, tamanho_bytes, uploaded_at
+    `;
+    res.json({ success: true, arquivo: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/alimentar/download/:id", verificarToken, verificarNaoEntregador, async (req, res) => {
+  try {
+    const rows = await sql`SELECT nome_arquivo, conteudo_base64, mime_type FROM alimentar_arquivos WHERE id = ${parseInt(req.params.id)}`;
+    if (!rows.length) return res.status(404).json({ error: "Arquivo não encontrado" });
+    const { nome_arquivo, conteudo_base64, mime_type } = rows[0];
+    const buffer = Buffer.from(conteudo_base64, 'base64');
+    res.setHeader('Content-Type', mime_type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nome_arquivo)}"`);
+    res.send(buffer);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/alimentar/:id", verificarToken, verificarNaoEntregador, async (req, res) => {
+  try {
+    await sql`DELETE FROM alimentar_arquivos WHERE id = ${parseInt(req.params.id)}`;
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 async function initDB() {
   await sql`CREATE EXTENSION IF NOT EXISTS unaccent`;
   await sql`
@@ -1243,6 +1305,18 @@ async function initDB() {
     )
   `;
   await sql`CREATE TABLE IF NOT EXISTS seeds_run (seed_name TEXT PRIMARY KEY, ran_at TIMESTAMP DEFAULT NOW())`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS alimentar_arquivos (
+      id              SERIAL PRIMARY KEY,
+      transportadora  TEXT NOT NULL,
+      nome_arquivo    TEXT NOT NULL,
+      conteudo_base64 TEXT NOT NULL,
+      mime_type       TEXT,
+      tamanho_bytes   INTEGER,
+      uploaded_by     INTEGER,
+      uploaded_at     TIMESTAMP DEFAULT NOW()
+    )
+  `;
 
   // ── Seed entregadores 2026 v1 ──
   const seedCheck = await sql`SELECT seed_name FROM seeds_run WHERE seed_name = 'entregadores_2026_v1'`;
