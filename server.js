@@ -1332,16 +1332,31 @@ async function lerTodasAbasCeps() {
       const r    = await sheets.spreadsheets.values.get({ spreadsheetId: CEP_SHEET_ID, range: `'${aba}'!A:Z` });
       const rows = r.data.values || [];
       if (rows.length < 2) { errosAbas.push(`${aba}: menos de 2 linhas`); continue; }
-      const headerRaw = rows[0];
-      const header = headerRaw.map(c => String(c || "").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, ""));
-      const cepIdx = header.findIndex(h => h === "cep");
+
+      // Procura a linha de cabeçalho nas primeiras 5 linhas
+      let headerRowIdx = -1;
+      let header = [];
+      for (let r = 0; r < Math.min(5, rows.length); r++) {
+        const h = rows[r].map(c => String(c || "").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, ""));
+        if (h.some(c => c === "cep" || c.startsWith("cep"))) {
+          headerRowIdx = r;
+          header = h;
+          break;
+        }
+      }
+      if (headerRowIdx < 0) {
+        errosAbas.push(`${aba}: cabeçalho CEP não encontrado nas 5 primeiras linhas. Linha 1: [${rows[0].join("|")}]`);
+        continue;
+      }
+
+      const cepIdx = header.findIndex(h => h === "cep" || h.startsWith("cep"));
       const entIdx = header.findIndex(h => h.includes("entregador"));
       const cidIdx = header.findIndex(h => h.includes("cidade"));
       const baiIdx = header.findIndex(h => h.includes("bairro"));
       const ruaIdx = header.findIndex(h => h.includes("rua"));
       const sigIdx = header.findIndex(h => h.includes("sigla"));
-      if (cepIdx < 0) { errosAbas.push(`${aba}: coluna CEP não encontrada (headers: ${headerRaw.join("|")})`); continue; }
-      for (let i = 1; i < rows.length; i++) {
+
+      for (let i = headerRowIdx + 1; i < rows.length; i++) {
         const row = rows[i];
         if (row.some(c => String(c).includes("#REF"))) continue;
         const cep = String(row[cepIdx] || "").replace(/\D/g, "");
