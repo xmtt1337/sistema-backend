@@ -1495,7 +1495,25 @@ app.get("/bipagem/buscar", verificarToken, verificarNaoEntregador, async (req, r
       LIMIT 1
     `;
 
-    if (!rows.length) return res.status(404).json({ error: "Código não encontrado em nenhum arquivo alimentado." });
+    if (!rows.length) {
+      // Se tem 8 dígitos, pode ser CEP digitado direto — redireciona para busca por CEP
+      const soDigitos = c.replace(/\D/g, "");
+      if (soDigitos.length === 8) {
+        const cepNorm = soDigitos.padStart(8, "0");
+        let cepRows = await sql`
+          SELECT entregador, cidade, bairro, rua, sigla, transportadora
+          FROM cep_entregadores WHERE cep = ${cepNorm} ORDER BY transportadora
+        `;
+        if (!cepRows.length) {
+          const linhas = await lerTodasAbasCeps();
+          cepRows = linhas
+            .filter(l => l.cep.padStart(8, "0") === cepNorm)
+            .map(l => ({ ...l, transportadora: normalizarAba(l.aba) }));
+        }
+        if (cepRows.length) return res.json({ tipo: "cep", resultados: cepRows });
+      }
+      return res.status(404).json({ error: "Código não encontrado em nenhum arquivo alimentado." });
+    }
 
     const p = rows[0];
     let entregador = null;
