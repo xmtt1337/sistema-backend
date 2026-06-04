@@ -1368,15 +1368,38 @@ function normalizarAba(aba) {
 async function buscarEntregadorPorCep(cep, transportadora) {
   try {
     const cepNorm = String(cep).replace(/\D/g, "").padStart(8, "0");
-    const rows = transportadora
-      ? await sql`SELECT * FROM cep_entregadores WHERE cep = ${cepNorm} AND transportadora = ${transportadora} LIMIT 1`
-      : await sql`SELECT * FROM cep_entregadores WHERE cep = ${cepNorm} LIMIT 1`;
-    return rows[0] || null;
+
+    // Tenta primeiro no banco (rápido)
+    const total = await sql`SELECT COUNT(*) AS n FROM cep_entregadores`;
+    if (parseInt(total[0].n) > 0) {
+      const rows = transportadora
+        ? await sql`SELECT * FROM cep_entregadores WHERE cep = ${cepNorm} AND transportadora = ${transportadora} LIMIT 1`
+        : await sql`SELECT * FROM cep_entregadores WHERE cep = ${cepNorm} LIMIT 1`;
+      if (rows[0]) return rows[0];
+    }
+
+    // Fallback: busca direto na planilha (mais lento, usado antes do sync)
+    const linhas = await lerTodasAbasCeps();
+    const candidatos = transportadora
+      ? linhas.filter(l => normalizarAba(l.aba) === transportadora)
+      : linhas;
+    const match = candidatos.find(l => l.cep.padStart(8, "0") === cepNorm);
+    if (!match) return null;
+    return { ...match, transportadora: normalizarAba(match.aba) };
   } catch (err) {
     console.error("Erro ao buscar CEP:", err.message);
     return null;
   }
 }
+
+app.get("/bipagem/cep-status", verificarToken, verificarNaoEntregador, async (req, res) => {
+  try {
+    const r = await sql`SELECT COUNT(*) AS total FROM cep_entregadores`;
+    res.json({ total: parseInt(r[0].total) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.post("/admin/sincronizar-ceps", verificarToken, verificarAdmin, async (req, res) => {
   try {
