@@ -1466,8 +1466,13 @@ app.post("/admin/sincronizar-ceps", verificarToken, verificarAdmin, async (req, 
         );
       }
       await client.query("COMMIT");
-      _cepCache = null; // invalida cache
-      res.json({ success: true, total: linhas.length });
+      _cepCache = null;
+      const porAba = linhas.reduce((acc, l) => {
+        const k = normalizarAba(l.aba);
+        acc[k] = (acc[k] || 0) + 1;
+        return acc;
+      }, {});
+      res.json({ success: true, total: linhas.length, por_transportadora: porAba });
     } catch (err) {
       await client.query("ROLLBACK");
       throw err;
