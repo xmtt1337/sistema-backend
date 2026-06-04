@@ -1367,19 +1367,60 @@ function normalizarAba(aba) {
 
 async function buscarEntregadorPorCep(cep, transportadora) {
   try {
-    const cepNorm    = String(cep).replace(/\D/g, "").padStart(8, "0");
-    const linhas     = await lerTodasAbasCeps();
-    const candidatos = transportadora
-      ? linhas.filter(l => normalizarAba(l.aba) === transportadora)
-      : linhas;
-    const match = candidatos.find(l => l.cep.padStart(8, "0") === cepNorm);
-    if (!match) return null;
-    return { ...match, transportadora: normalizarAba(match.aba) };
+    const cepNorm = String(cep).replace(/\D/g, "").padStart(8, "0");
+    const rows = transportadora
+      ? await sql`SELECT * FROM cep_entregadores WHERE cep = ${cepNorm} AND transportadora = ${transportadora} LIMIT 1`
+      : await sql`SELECT * FROM cep_entregadores WHERE cep = ${cepNorm} LIMIT 1`;
+    return rows[0] || null;
   } catch (err) {
     console.error("Erro ao buscar CEP:", err.message);
     return null;
   }
 }
+
+app.post("/admin/sincronizar-ceps", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const linhas = await lerTodasAbasCeps();
+    if (!linhas.length) return res.status(404).json({ error: "Nenhum dado encontrado na planilha." });
+
+    const client = await pgPool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("DELETE FROM cep_entregadores");
+      const CHUNK = 500;
+      for (let i = 0; i < linhas.length; i += CHUNK) {
+        const chunk = linhas.slice(i, i + CHUNK);
+        const placeholders = chunk.map((_, j) => {
+          const b = j * 7;
+          return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7})`;
+        }).join(",");
+        const values = chunk.flatMap(l => [
+          l.cep.padStart(8, "0"),
+          l.entregador    || null,
+          l.cidade        || null,
+          l.bairro        || null,
+          l.rua           || null,
+          l.sigla         || null,
+          normalizarAba(l.aba)
+        ]);
+        await client.query(
+          `INSERT INTO cep_entregadores (cep,entregador,cidade,bairro,rua,sigla,transportadora) VALUES ${placeholders}`,
+          values
+        );
+      }
+      await client.query("COMMIT");
+      _cepCache = null; // invalida cache
+      res.json({ success: true, total: linhas.length });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.get("/admin/debug-ceps", verificarToken, verificarAdmin, async (req, res) => {
   try {
@@ -1508,6 +1549,19 @@ async function initDB() {
     )
   `;
   await sql`ALTER TABLE alimentar_pacotes ADD COLUMN IF NOT EXISTS cep TEXT`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS cep_entregadores (
+      id             SERIAL PRIMARY KEY,
+      cep            TEXT NOT NULL,
+      entregador     TEXT,
+      cidade         TEXT,
+      bairro         TEXT,
+      rua            TEXT,
+      sigla          TEXT,
+      transportadora TEXT
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_cep_ent ON cep_entregadores(cep)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_alim_pac_barcode ON alimentar_pacotes (UPPER(codigo_barras))`;
   await sql`CREATE INDEX IF NOT EXISTS idx_alim_pac_idpac ON alimentar_pacotes (UPPER(id_pacote))`;
   await sql`
