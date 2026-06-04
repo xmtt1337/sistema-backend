@@ -1321,7 +1321,7 @@ async function lerTodasAbasCeps() {
   const resultado = [];
   for (const aba of abas) {
     try {
-      const r    = await sheets.spreadsheets.values.get({ spreadsheetId: CEP_SHEET_ID, range: `${aba}!A:F` });
+      const r    = await sheets.spreadsheets.values.get({ spreadsheetId: CEP_SHEET_ID, range: `'${aba}'!A:F` });
       const rows = r.data.values || [];
       if (rows.length < 2) continue;
       const header = rows[0].map(c => String(c || "").trim().toLowerCase());
@@ -1474,8 +1474,14 @@ app.post("/admin/sincronizar-ceps", verificarToken, verificarAdmin, async (req, 
 
 app.get("/admin/debug-ceps", verificarToken, verificarAdmin, async (req, res) => {
   try {
-    const rows = await lerPlanilhaCeps();
-    res.json({ total_linhas: rows.length, primeiras_5: rows.slice(0, 5) });
+    const porTransp = await sql`
+      SELECT transportadora, COUNT(*) AS total
+      FROM cep_entregadores
+      GROUP BY transportadora
+      ORDER BY transportadora
+    `;
+    const amostra = await sql`SELECT * FROM cep_entregadores LIMIT 3`;
+    res.json({ por_transportadora: porTransp, amostra });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
