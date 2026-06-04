@@ -4,7 +4,49 @@ const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const { google } = require("googleapis");
+const { Pool } = require("pg");
 const sql = require("./db");
+
+const pgPool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
+
+async function bulkInsertPacotes(arquivoId, transportadora, pacotes) {
+  const validos = pacotes.filter(p => p.codigo_barras || p.id_pacote);
+  if (!validos.length) return 0;
+  const CHUNK = 500;
+  const client = await pgPool.connect();
+  try {
+    await client.query("BEGIN");
+    for (let i = 0; i < validos.length; i += CHUNK) {
+      const chunk = validos.slice(i, i + CHUNK);
+      const placeholders = chunk.map((_, j) => {
+        const b = j * 8;
+        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8})`;
+      }).join(",");
+      const values = chunk.flatMap(p => [
+        arquivoId, transportadora,
+        p.codigo_barras || null, p.id_pacote || null,
+        p.cidade || null, p.regiao || null,
+        p.cep || null, p.destinatario || null
+      ]);
+      await client.query(
+        `INSERT INTO alimentar_pacotes
+         (arquivo_id,transportadora,codigo_barras,id_pacote,cidade,regiao,cep,destinatario)
+         VALUES ${placeholders}`,
+        values
+      );
+    }
+    await client.query("COMMIT");
+    return validos.length;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
 
 const ORIGENS_PERMITIDAS = [
   "https://xmtt1337.github.io",
@@ -1224,17 +1266,10 @@ app.post("/alimentar/upload", verificarToken, verificarNaoEntregador, async (req
       RETURNING id, transportadora, nome_arquivo, mime_type, tamanho_bytes, uploaded_at
     `;
     const arquivoId = rows[0].id;
-    if (Array.isArray(pacotes) && pacotes.length) {
-      for (const p of pacotes) {
-        if (!p.codigo_barras && !p.id_pacote) continue;
-        await sql`
-          INSERT INTO alimentar_pacotes (arquivo_id, transportadora, codigo_barras, id_pacote, cidade, regiao, cep, destinatario)
-          VALUES (${arquivoId}, ${transportadora}, ${p.codigo_barras || null}, ${p.id_pacote || null},
-                  ${p.cidade || null}, ${p.regiao || null}, ${p.cep || null}, ${p.destinatario || null})
-        `;
-      }
-    }
-    res.json({ success: true, arquivo: rows[0], pacotes_inseridos: Array.isArray(pacotes) ? pacotes.length : 0 });
+    const pacotes_inseridos = Array.isArray(pacotes) && pacotes.length
+      ? await bulkInsertPacotes(arquivoId, transportadora, pacotes)
+      : 0;
+    res.json({ success: true, arquivo: rows[0], pacotes_inseridos });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
