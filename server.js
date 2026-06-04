@@ -1211,7 +1211,7 @@ app.get("/alimentar/arquivos", verificarToken, verificarNaoEntregador, async (re
 
 app.post("/alimentar/upload", verificarToken, verificarNaoEntregador, async (req, res) => {
   try {
-    const { transportadora, nome_arquivo, conteudo_base64, mime_type } = req.body;
+    const { transportadora, nome_arquivo, conteudo_base64, mime_type, pacotes } = req.body;
     if (!transportadora || !nome_arquivo || !conteudo_base64)
       return res.status(400).json({ error: "Dados incompletos." });
     const validas = ['loggi', 'anjun', 'jt', 'imile'];
@@ -1223,7 +1223,18 @@ app.post("/alimentar/upload", verificarToken, verificarNaoEntregador, async (req
       VALUES (${transportadora}, ${nome_arquivo}, ${conteudo_base64}, ${mime_type || null}, ${tamanho_bytes}, ${req.user.id})
       RETURNING id, transportadora, nome_arquivo, mime_type, tamanho_bytes, uploaded_at
     `;
-    res.json({ success: true, arquivo: rows[0] });
+    const arquivoId = rows[0].id;
+    if (Array.isArray(pacotes) && pacotes.length) {
+      for (const p of pacotes) {
+        if (!p.codigo_barras && !p.id_pacote) continue;
+        await sql`
+          INSERT INTO alimentar_pacotes (arquivo_id, transportadora, codigo_barras, id_pacote, cidade, regiao, destinatario)
+          VALUES (${arquivoId}, ${transportadora}, ${p.codigo_barras || null}, ${p.id_pacote || null},
+                  ${p.cidade || null}, ${p.regiao || null}, ${p.destinatario || null})
+        `;
+      }
+    }
+    res.json({ success: true, arquivo: rows[0], pacotes_inseridos: Array.isArray(pacotes) ? pacotes.length : 0 });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1245,8 +1256,126 @@ app.get("/alimentar/download/:id", verificarToken, verificarNaoEntregador, async
 
 app.delete("/alimentar/:id", verificarToken, verificarNaoEntregador, async (req, res) => {
   try {
-    await sql`DELETE FROM alimentar_arquivos WHERE id = ${parseInt(req.params.id)}`;
+    const id = parseInt(req.params.id);
+    await sql`DELETE FROM alimentar_pacotes WHERE arquivo_id = ${id}`;
+    await sql`DELETE FROM alimentar_arquivos WHERE id = ${id}`;
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ───── BIPAGENS ─────
+
+const CEP_SHEET_ID = "1igX7HiJSM8v9VjvbO4ZeXPo8U062xOMKyBFjK9K4XU8";
+
+async function lerPlanilhaCeps() {
+  const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+  const auth  = new google.auth.GoogleAuth({ credentials: creds, scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"] });
+  const sheets = google.sheets({ version: "v4", auth });
+  const r = await sheets.spreadsheets.values.get({ spreadsheetId: CEP_SHEET_ID, range: "A:Z" });
+  return r.data.values || [];
+}
+
+function normCep(v) {
+  return String(v || "").replace(/\D/g, "").padStart(8, "0");
+}
+
+function cepNaFaixa(cep, inicio, fim) {
+  const c = parseInt(normCep(cep),  10);
+  const i = parseInt(normCep(inicio), 10);
+  const f = parseInt(normCep(fim),   10);
+  if (isNaN(c) || isNaN(i) || isNaN(f)) return false;
+  return c >= i && c <= f;
+}
+
+async function buscarEntregadorPorCep(cep) {
+  try {
+    const rows = await lerPlanilhaCeps();
+    if (!rows.length) return null;
+    const header = rows[0].map(c => String(c || "").trim().toLowerCase());
+    const cepIniIdx = header.findIndex(h => h.includes("cep") && (h.includes("ini") || h.includes("de") || h.includes("início") || h.includes("inicio") || h === "cep"));
+    const cepFimIdx = header.findIndex(h => h.includes("cep") && (h.includes("fim") || h.includes("até") || h.includes("ate") || h.includes("final")));
+    const entregIdx = header.findIndex(h => h.includes("entregador") || h.includes("motorista") || h.includes("nome"));
+    const cidadeIdx = header.findIndex(h => h.includes("cidade") || h.includes("municipio") || h.includes("município"));
+    const transpIdx = header.findIndex(h => h.includes("transport") || h.includes("operadora"));
+
+    if (cepIniIdx < 0) return null;
+
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      const ini = cepIniIdx >= 0 ? row[cepIniIdx] : row[0];
+      const fim = cepFimIdx >= 0 ? row[cepFimIdx] : (cepIniIdx >= 0 ? row[cepIniIdx + 1] : row[1]);
+      if (!ini) continue;
+      if (cepNaFaixa(cep, ini, fim)) {
+        return {
+          entregador:    entregIdx  >= 0 ? String(row[entregIdx]  || "").trim() : null,
+          cidade:        cidadeIdx  >= 0 ? String(row[cidadeIdx]  || "").trim() : null,
+          transportadora: transpIdx >= 0 ? String(row[transpIdx]  || "").trim() : null,
+        };
+      }
+    }
+    return null;
+  } catch (err) {
+    console.error("Erro ao ler planilha CEPs:", err.message);
+    return null;
+  }
+}
+
+app.get("/bipagem/buscar", verificarToken, verificarNaoEntregador, async (req, res) => {
+  try {
+    const { codigo } = req.query;
+    if (!codigo || !codigo.trim()) return res.status(400).json({ error: "Código não informado." });
+    const c = codigo.trim();
+
+    const rows = await sql`
+      SELECT transportadora, codigo_barras, id_pacote, cidade, regiao, destinatario, cep
+      FROM alimentar_pacotes
+      WHERE UPPER(TRIM(codigo_barras)) = UPPER(${c})
+         OR UPPER(TRIM(id_pacote))     = UPPER(${c})
+      LIMIT 1
+    `;
+
+    if (!rows.length) return res.status(404).json({ error: "Código não encontrado em nenhum arquivo alimentado." });
+
+    const p = rows[0];
+    let entregador = null;
+    let cidadeMatch = p.cidade;
+    let transpMatch = p.transportadora;
+
+    if (p.cep) {
+      const match = await buscarEntregadorPorCep(p.cep);
+      if (match) {
+        entregador  = match.entregador;
+        cidadeMatch = match.cidade || cidadeMatch;
+        if (match.transportadora) transpMatch = match.transportadora;
+      }
+    }
+
+    if (!entregador && p.cidade) {
+      const cidadeNorm = String(p.cidade).trim().toLowerCase()
+        .normalize("NFD").replace(/[̀-ͯ]/g, "");
+      const users = await sql`SELECT name FROM users WHERE role = 'entregador' AND active = TRUE`;
+      for (const u of users) {
+        const parts = u.name.split(" - ");
+        if (parts.length >= 2) {
+          const cidadeUser = parts[parts.length - 1].trim().toLowerCase()
+            .normalize("NFD").replace(/[̀-ͯ]/g, "");
+          if (cidadeNorm === cidadeUser || cidadeNorm.includes(cidadeUser) || cidadeUser.includes(cidadeNorm)) {
+            entregador = u.name; break;
+          }
+        }
+      }
+    }
+
+    res.json({
+      transportadora: transpMatch,
+      cidade:         cidadeMatch,
+      regiao:         p.regiao,
+      destinatario:   p.destinatario,
+      cep:            p.cep,
+      entregador
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1305,6 +1434,22 @@ async function initDB() {
     )
   `;
   await sql`CREATE TABLE IF NOT EXISTS seeds_run (seed_name TEXT PRIMARY KEY, ran_at TIMESTAMP DEFAULT NOW())`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS alimentar_pacotes (
+      id              SERIAL PRIMARY KEY,
+      arquivo_id      INTEGER NOT NULL,
+      transportadora  TEXT NOT NULL,
+      codigo_barras   TEXT,
+      id_pacote       TEXT,
+      cidade          TEXT,
+      regiao          TEXT,
+      cep             TEXT,
+      destinatario    TEXT,
+      created_at      TIMESTAMP DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_alim_pac_barcode ON alimentar_pacotes (UPPER(codigo_barras))`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_alim_pac_idpac ON alimentar_pacotes (UPPER(id_pacote))`;
   await sql`
     CREATE TABLE IF NOT EXISTS alimentar_arquivos (
       id              SERIAL PRIMARY KEY,
