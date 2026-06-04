@@ -1507,14 +1507,26 @@ app.post("/admin/sincronizar-ceps", verificarToken, verificarAdmin, async (req, 
 
 app.get("/admin/debug-ceps", verificarToken, verificarAdmin, async (req, res) => {
   try {
-    const porTransp = await sql`
-      SELECT transportadora, COUNT(*) AS total
-      FROM cep_entregadores
-      GROUP BY transportadora
-      ORDER BY transportadora
-    `;
-    const amostra = await sql`SELECT * FROM cep_entregadores LIMIT 3`;
-    res.json({ por_transportadora: porTransp, amostra });
+    // Lê diretamente do Google Sheets e mostra estrutura de cada aba
+    const creds  = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+    const auth   = new google.auth.GoogleAuth({ credentials: creds, scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"] });
+    const sheets = google.sheets({ version: "v4", auth });
+    const meta   = await sheets.spreadsheets.get({ spreadsheetId: CEP_SHEET_ID });
+    const abas   = meta.data.sheets.map(s => s.properties.title);
+
+    const resultado = [];
+    for (const aba of abas) {
+      try {
+        const r    = await sheets.spreadsheets.values.get({ spreadsheetId: CEP_SHEET_ID, range: `'${aba}'!A1:Z5` });
+        const rows = r.data.values || [];
+        resultado.push({ aba, total_linhas: rows.length, primeiras_3: rows.slice(0, 3) });
+      } catch (err) {
+        resultado.push({ aba, erro: err.message });
+      }
+    }
+
+    const porTransp = await sql`SELECT transportadora, COUNT(*) AS total FROM cep_entregadores GROUP BY transportadora ORDER BY transportadora`;
+    res.json({ abas_sheets: resultado, banco: porTransp });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
