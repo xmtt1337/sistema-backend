@@ -1322,6 +1322,15 @@ async function buscarEntregadorPorCep(cep) {
   }
 }
 
+app.get("/admin/debug-ceps", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const rows = await lerPlanilhaCeps();
+    res.json({ total_linhas: rows.length, primeiras_5: rows.slice(0, 5) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/bipagem/buscar", verificarToken, verificarNaoEntregador, async (req, res) => {
   try {
     const { codigo } = req.query;
