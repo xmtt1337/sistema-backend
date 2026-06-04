@@ -1228,9 +1228,9 @@ app.post("/alimentar/upload", verificarToken, verificarNaoEntregador, async (req
       for (const p of pacotes) {
         if (!p.codigo_barras && !p.id_pacote) continue;
         await sql`
-          INSERT INTO alimentar_pacotes (arquivo_id, transportadora, codigo_barras, id_pacote, cidade, regiao, destinatario)
+          INSERT INTO alimentar_pacotes (arquivo_id, transportadora, codigo_barras, id_pacote, cidade, regiao, cep, destinatario)
           VALUES (${arquivoId}, ${transportadora}, ${p.codigo_barras || null}, ${p.id_pacote || null},
-                  ${p.cidade || null}, ${p.regiao || null}, ${p.destinatario || null})
+                  ${p.cidade || null}, ${p.regiao || null}, ${p.cep || null}, ${p.destinatario || null})
         `;
       }
     }
@@ -1472,6 +1472,7 @@ async function initDB() {
       created_at      TIMESTAMP DEFAULT NOW()
     )
   `;
+  await sql`ALTER TABLE alimentar_pacotes ADD COLUMN IF NOT EXISTS cep TEXT`;
   await sql`CREATE INDEX IF NOT EXISTS idx_alim_pac_barcode ON alimentar_pacotes (UPPER(codigo_barras))`;
   await sql`CREATE INDEX IF NOT EXISTS idx_alim_pac_idpac ON alimentar_pacotes (UPPER(id_pacote))`;
   await sql`
