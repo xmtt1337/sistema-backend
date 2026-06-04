@@ -1269,55 +1269,76 @@ app.delete("/alimentar/:id", verificarToken, verificarNaoEntregador, async (req,
 
 const CEP_SHEET_ID = "1igX7HiJSM8v9VjvbO4ZeXPo8U062xOMKyBFjK9K4XU8";
 
-async function lerPlanilhaCeps() {
-  const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS);
-  const auth  = new google.auth.GoogleAuth({ credentials: creds, scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"] });
+let _cepCache    = null;
+let _cepCacheAt  = 0;
+const CEP_CACHE_TTL = 5 * 60 * 1000;
+
+async function lerTodasAbasCeps() {
+  if (_cepCache && Date.now() - _cepCacheAt < CEP_CACHE_TTL) return _cepCache;
+
+  const creds  = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+  const auth   = new google.auth.GoogleAuth({ credentials: creds, scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"] });
   const sheets = google.sheets({ version: "v4", auth });
-  const r = await sheets.spreadsheets.values.get({ spreadsheetId: CEP_SHEET_ID, range: "A:Z" });
-  return r.data.values || [];
+
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: CEP_SHEET_ID });
+  const abas  = meta.data.sheets.map(s => s.properties.title);
+
+  const resultado = [];
+  for (const aba of abas) {
+    try {
+      const r    = await sheets.spreadsheets.values.get({ spreadsheetId: CEP_SHEET_ID, range: `${aba}!A:F` });
+      const rows = r.data.values || [];
+      if (rows.length < 2) continue;
+      const header = rows[0].map(c => String(c || "").trim().toLowerCase());
+      const cepIdx = header.findIndex(h => h === "cep");
+      const entIdx = header.findIndex(h => h === "entregador");
+      const cidIdx = header.findIndex(h => h === "cidade");
+      const baiIdx = header.findIndex(h => h === "bairro");
+      const ruaIdx = header.findIndex(h => h === "rua");
+      const sigIdx = header.findIndex(h => h === "sigla");
+      if (cepIdx < 0) continue;
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (row.some(c => String(c).includes("#REF"))) continue;
+        const cep = String(row[cepIdx] || "").replace(/\D/g, "");
+        if (cep.length < 5) continue;
+        resultado.push({
+          cep,
+          entregador: entIdx >= 0 ? String(row[entIdx] || "").trim() : "",
+          cidade:     cidIdx >= 0 ? String(row[cidIdx] || "").trim() : "",
+          bairro:     baiIdx >= 0 ? String(row[baiIdx] || "").trim() : "",
+          rua:        ruaIdx >= 0 ? String(row[ruaIdx] || "").trim() : "",
+          sigla:      sigIdx >= 0 ? String(row[sigIdx] || "").trim() : "",
+          aba,
+        });
+      }
+    } catch { /* pula abas com erro */ }
+  }
+
+  _cepCache   = resultado;
+  _cepCacheAt = Date.now();
+  return resultado;
 }
 
-function normCep(v) {
-  return String(v || "").replace(/\D/g, "").padStart(8, "0");
-}
-
-function cepNaFaixa(cep, inicio, fim) {
-  const c = parseInt(normCep(cep),  10);
-  const i = parseInt(normCep(inicio), 10);
-  const f = parseInt(normCep(fim),   10);
-  if (isNaN(c) || isNaN(i) || isNaN(f)) return false;
-  return c >= i && c <= f;
+function normalizarAba(aba) {
+  const s = String(aba).toLowerCase().trim();
+  if (s.includes("loggi"))  return "loggi";
+  if (s.includes("anjun"))  return "anjun";
+  if (s.includes("j&t") || s.includes("jt")) return "jt";
+  if (s.includes("imile"))  return "imile";
+  if (s.includes("shopee")) return "shopee";
+  return aba;
 }
 
 async function buscarEntregadorPorCep(cep) {
   try {
-    const rows = await lerPlanilhaCeps();
-    if (!rows.length) return null;
-    const header = rows[0].map(c => String(c || "").trim().toLowerCase());
-    const cepIniIdx = header.findIndex(h => h.includes("cep") && (h.includes("ini") || h.includes("de") || h.includes("início") || h.includes("inicio") || h === "cep"));
-    const cepFimIdx = header.findIndex(h => h.includes("cep") && (h.includes("fim") || h.includes("até") || h.includes("ate") || h.includes("final")));
-    const entregIdx = header.findIndex(h => h.includes("entregador") || h.includes("motorista") || h.includes("nome"));
-    const cidadeIdx = header.findIndex(h => h.includes("cidade") || h.includes("municipio") || h.includes("município"));
-    const transpIdx = header.findIndex(h => h.includes("transport") || h.includes("operadora"));
-
-    if (cepIniIdx < 0) return null;
-
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i];
-      const ini = cepIniIdx >= 0 ? row[cepIniIdx] : row[0];
-      const fim = cepFimIdx >= 0 ? row[cepFimIdx] : (cepIniIdx >= 0 ? row[cepIniIdx + 1] : row[1]);
-      if (!ini) continue;
-      if (cepNaFaixa(cep, ini, fim)) {
-        return {
-          entregador:    entregIdx  >= 0 ? String(row[entregIdx]  || "").trim() : null,
-          cidade:        cidadeIdx  >= 0 ? String(row[cidadeIdx]  || "").trim() : null,
-          transportadora: transpIdx >= 0 ? String(row[transpIdx]  || "").trim() : null,
-        };
-      }
-    }
-    return null;
+    const cepNorm = String(cep).replace(/\D/g, "").padStart(8, "0");
+    const linhas  = await lerTodasAbasCeps();
+    const match   = linhas.find(l => l.cep.padStart(8, "0") === cepNorm);
+    if (!match) return null;
+    return { ...match, transportadora: normalizarAba(match.aba) };
   } catch (err) {
-    console.error("Erro ao ler planilha CEPs:", err.message);
+    console.error("Erro ao buscar CEP:", err.message);
     return null;
   }
 }
@@ -1352,37 +1373,28 @@ app.get("/bipagem/buscar", verificarToken, verificarNaoEntregador, async (req, r
     let cidadeMatch = p.cidade;
     let transpMatch = p.transportadora;
 
+    let bairro = null, sigla = null, rua = null;
+
     if (p.cep) {
       const match = await buscarEntregadorPorCep(p.cep);
       if (match) {
-        entregador  = match.entregador;
-        cidadeMatch = match.cidade || cidadeMatch;
+        if (match.entregador)    entregador  = match.entregador;
+        if (match.cidade)        cidadeMatch = match.cidade;
         if (match.transportadora) transpMatch = match.transportadora;
-      }
-    }
-
-    if (!entregador && p.cidade) {
-      const cidadeNorm = String(p.cidade).trim().toLowerCase()
-        .normalize("NFD").replace(/[̀-ͯ]/g, "");
-      const users = await sql`SELECT name FROM users WHERE role = 'entregador' AND active = TRUE`;
-      for (const u of users) {
-        const parts = u.name.split(" - ");
-        if (parts.length >= 2) {
-          const cidadeUser = parts[parts.length - 1].trim().toLowerCase()
-            .normalize("NFD").replace(/[̀-ͯ]/g, "");
-          if (cidadeNorm === cidadeUser || cidadeNorm.includes(cidadeUser) || cidadeUser.includes(cidadeNorm)) {
-            entregador = u.name; break;
-          }
-        }
+        bairro = match.bairro || null;
+        sigla  = match.sigla  || null;
+        rua    = match.rua    || null;
       }
     }
 
     res.json({
       transportadora: transpMatch,
       cidade:         cidadeMatch,
-      regiao:         p.regiao,
-      destinatario:   p.destinatario,
+      bairro,
+      rua,
+      sigla,
       cep:            p.cep,
+      destinatario:   p.destinatario,
       entregador
     });
   } catch (err) {
