@@ -1435,6 +1435,23 @@ app.post("/bipagem/registrar", verificarToken, verificarNaoEntregador, async (re
   }
 });
 
+app.get("/pedidos/buscar", verificarToken, verificarNaoEntregador, async (req, res) => {
+  try {
+    const { codigo } = req.query;
+    if (!codigo || !codigo.trim()) return res.status(400).json({ error: "Código não informado." });
+    const rows = await sql`
+      SELECT codigo, entregador, transportadora, cidade, cep, bipado_em, usuario_nome
+      FROM bipagens_log
+      WHERE UPPER(TRIM(codigo)) = UPPER(TRIM(${codigo.trim()}))
+      ORDER BY bipado_em DESC
+    `;
+    if (!rows.length) return res.status(404).json({ error: "Nenhuma bipagem encontrada para este código." });
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/bipagem/buscar-cep", verificarToken, verificarNaoEntregador, async (req, res) => {
   try {
     const { cep } = req.query;
