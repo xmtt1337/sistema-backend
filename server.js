@@ -1420,6 +1420,20 @@ async function buscarEntregadorPorCep(cep, transportadora) {
   }
 }
 
+app.post("/bipagem/registrar", verificarToken, verificarNaoEntregador, async (req, res) => {
+  try {
+    const { codigo, entregador, transportadora, cidade, cep } = req.body;
+    if (!codigo) return res.status(400).json({ error: "Código obrigatório." });
+    await sql`
+      INSERT INTO bipagens_log (codigo, entregador, transportadora, cidade, cep, user_id)
+      VALUES (${codigo}, ${entregador || null}, ${transportadora || null}, ${cidade || null}, ${cep || null}, ${req.user.id})
+    `;
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/bipagem/buscar-cep", verificarToken, verificarNaoEntregador, async (req, res) => {
   try {
     const { cep } = req.query;
@@ -1700,6 +1714,19 @@ async function initDB() {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_cep_ent ON cep_entregadores(cep)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_alim_pac_barcode ON alimentar_pacotes (UPPER(codigo_barras))`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS bipagens_log (
+      id              SERIAL PRIMARY KEY,
+      codigo          TEXT NOT NULL,
+      entregador      TEXT,
+      transportadora  TEXT,
+      cidade          TEXT,
+      cep             TEXT,
+      user_id         INTEGER,
+      bipado_em       TIMESTAMP DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_bip_log_em ON bipagens_log (bipado_em DESC)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_alim_pac_idpac ON alimentar_pacotes (UPPER(id_pacote))`;
   await sql`
     CREATE TABLE IF NOT EXISTS alimentar_arquivos (
