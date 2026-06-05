@@ -1125,7 +1125,7 @@ app.patch("/admin/usuarios/:id", verificarToken, verificarAdmin, async (req, res
     if (id === req.user.id) return res.status(400).json({ error: "Não é possível alterar sua própria conta." });
     const { active, role } = req.body;
     if (role !== undefined) {
-      const validRoles = ["admin", "finance", "sac", "user", "entregador"];
+      const validRoles = ["admin", "user", "entregador"];
       if (!validRoles.includes(role)) return res.status(400).json({ error: "Role inválido." });
       await sql`UPDATE users SET role = ${role} WHERE id = ${id}`;
     }
