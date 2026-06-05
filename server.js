@@ -87,6 +87,11 @@ function verificarAdmin(req, res, next) {
   next();
 }
 
+function verificarGestor(req, res, next) {
+  if (req.user.role !== "admin" && req.user.role !== "finance") return res.status(403).json({ error: "Acesso negado" });
+  next();
+}
+
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
   try {
@@ -226,7 +231,7 @@ async function lerCadastroPix() {
   return r.data.values || [];
 }
 
-app.get("/admin/pagamentos", verificarToken, verificarAdmin, async (req, res) => {
+app.get("/admin/pagamentos", verificarToken, verificarGestor, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
     const planilha = await sql`
@@ -316,7 +321,7 @@ app.get("/admin/pagamentos", verificarToken, verificarAdmin, async (req, res) =>
   }
 });
 
-app.get("/admin/pagamentos/csv", verificarToken, verificarAdmin, async (req, res) => {
+app.get("/admin/pagamentos/csv", verificarToken, verificarGestor, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
     const planilha = await sql`
@@ -551,7 +556,7 @@ app.get("/painel", verificarToken, async (req, res) => {
   }
 });
 
-app.get("/admin/entregadores", verificarToken, verificarAdmin, async (req, res) => {
+app.get("/admin/entregadores", verificarToken, verificarGestor, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
 
@@ -612,7 +617,7 @@ app.get("/admin/entregadores", verificarToken, verificarAdmin, async (req, res) 
   }
 });
 
-app.get("/admin/painel", verificarToken, verificarAdmin, async (req, res) => {
+app.get("/admin/painel", verificarToken, verificarGestor, async (req, res) => {
   try {
     const { mes, ano, quinzena, entregador } = req.query;
 
@@ -734,7 +739,7 @@ app.get("/admin/painel", verificarToken, verificarAdmin, async (req, res) => {
   }
 });
 
-app.get("/admin/resumo-quinzena", verificarToken, verificarAdmin, async (req, res) => {
+app.get("/admin/resumo-quinzena", verificarToken, verificarGestor, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
 
@@ -777,14 +782,14 @@ app.get("/admin/resumo-quinzena", verificarToken, verificarAdmin, async (req, re
   }
 });
 
-app.get("/admin/planilhas", verificarToken, verificarAdmin, async (req, res) => {
+app.get("/admin/planilhas", verificarToken, verificarGestor, async (req, res) => {
   const rows = await sql`
     SELECT * FROM planilhas_quinzena ORDER BY ano DESC, mes DESC, quinzena DESC
   `;
   res.json(rows);
 });
 
-app.post("/admin/planilhas", verificarToken, verificarAdmin, async (req, res) => {
+app.post("/admin/planilhas", verificarToken, verificarGestor, async (req, res) => {
   const { mes, ano, quinzena, spreadsheet_url } = req.body;
   const spreadsheet_id = extrairSpreadsheetId(spreadsheet_url);
   await sql`
@@ -796,12 +801,12 @@ app.post("/admin/planilhas", verificarToken, verificarAdmin, async (req, res) =>
   res.json({ success: true });
 });
 
-app.delete("/admin/planilhas/:id", verificarToken, verificarAdmin, async (req, res) => {
+app.delete("/admin/planilhas/:id", verificarToken, verificarGestor, async (req, res) => {
   await sql`DELETE FROM planilhas_quinzena WHERE id = ${req.params.id}`;
   res.json({ success: true });
 });
 
-app.get("/admin/historico", verificarToken, verificarAdmin, async (req, res) => {
+app.get("/admin/historico", verificarToken, verificarGestor, async (req, res) => {
   try {
     const { ano } = req.query;
     const planilhas = await sql`
@@ -893,7 +898,7 @@ app.get("/test-db", async (req, res) => {
   }
 });
 
-app.get("/admin/conferencia", verificarToken, verificarAdmin, async (req, res) => {
+app.get("/admin/conferencia", verificarToken, verificarGestor, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
 
@@ -974,7 +979,7 @@ app.get("/admin/conferencia", verificarToken, verificarAdmin, async (req, res) =
   }
 });
 
-app.get("/admin/notas", verificarToken, verificarAdmin, async (req, res) => {
+app.get("/admin/notas", verificarToken, verificarGestor, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
     const rows = await sql`
@@ -1079,7 +1084,7 @@ app.get("/nota/verificar", verificarToken, async (req, res) => {
 });
 
 // ───── ADMIN USUÁRIOS ─────
-app.get("/admin/usuarios", verificarToken, verificarAdmin, async (req, res) => {
+app.get("/admin/usuarios", verificarToken, verificarGestor, async (req, res) => {
   try {
     const { role } = req.query;
     const rows = role
@@ -1194,7 +1199,7 @@ app.post("/admin/trampay/importar", verificarToken, verificarAdmin, async (req, 
   }
 });
 
-app.get("/admin/trampay/entregadores", verificarToken, verificarAdmin, async (req, res) => {
+app.get("/admin/trampay/entregadores", verificarToken, verificarGestor, async (req, res) => {
   try {
     const rows = await sql`
       SELECT id, nome, documento, id_externo, chave_pix, tipo_pix, data_criacao,
@@ -1501,7 +1506,7 @@ app.get("/bipagem/buscar-cep", verificarToken, verificarNaoEntregador, async (re
   }
 });
 
-app.get("/bipagem/desempenho", verificarToken, verificarAdmin, async (req, res) => {
+app.get("/bipagem/desempenho", verificarToken, verificarGestor, async (req, res) => {
   try {
     const { mes, ano, transportadora } = req.query;
     const hasMes    = mes && ano;
@@ -1535,7 +1540,7 @@ app.get("/bipagem/cep-status", verificarToken, verificarNaoEntregador, async (re
   }
 });
 
-app.post("/admin/sincronizar-ceps", verificarToken, verificarAdmin, async (req, res) => {
+app.post("/admin/sincronizar-ceps", verificarToken, verificarGestor, async (req, res) => {
   try {
     const linhas = await lerTodasAbasCeps();
     if (!linhas.length) return res.status(404).json({ error: "Nenhum dado encontrado na planilha." });
@@ -1584,7 +1589,7 @@ app.post("/admin/sincronizar-ceps", verificarToken, verificarAdmin, async (req, 
   }
 });
 
-app.get("/admin/debug-ceps", verificarToken, verificarAdmin, async (req, res) => {
+app.get("/admin/debug-ceps", verificarToken, verificarGestor, async (req, res) => {
   try {
     // Lê diretamente do Google Sheets e mostra estrutura de cada aba
     const creds  = JSON.parse(process.env.GOOGLE_CREDENTIALS);
