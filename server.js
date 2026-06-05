@@ -1057,27 +1057,56 @@ app.post("/nota", verificarToken, async (req, res) => {
 
 app.get("/nota/verificar", verificarToken, async (req, res) => {
   try {
-    const { chave_acesso, mes, ano, quinzena } = req.query;
-    if (!chave_acesso) return res.json({ duplicata: false });
-    const rows = await sql`
-      SELECT nf.mes, nf.ano, nf.quinzena, u.username, u.name AS user_name
-      FROM notas_fiscais nf
-      JOIN users u ON u.id = nf.user_id
-      WHERE nf.chave_acesso = ${chave_acesso}
-        AND (nf.deleted IS NULL OR nf.deleted = FALSE)
-        AND NOT (nf.user_id = ${req.user.id}
-             AND nf.mes      = ${parseInt(mes)}
-             AND nf.ano      = ${parseInt(ano)}
-             AND nf.quinzena = ${parseInt(quinzena)})
-    `;
-    if (rows.length) {
-      const r = rows[0];
-      const meses = ["","Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
-      const detalhe = `${r.user_name || r.username} — ${r.quinzena}ª quinzena de ${meses[r.mes]}/${r.ano}`;
-      res.json({ duplicata: true, detalhe });
-    } else {
-      res.json({ duplicata: false });
+    const { chave_acesso, numero_nf, valor, cnpj, emissor, emissao, mes, ano, quinzena } = req.query;
+    const uid    = req.user.id;
+    const excMes = parseInt(mes);
+    const excAno = parseInt(ano);
+    const excQz  = parseInt(quinzena);
+    const meses  = ["","Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+
+    const _fmt = (r, extra) => ({
+      duplicata: true,
+      detalhe: `${r.user_name || r.username} — ${r.quinzena}ª quinzena de ${meses[r.mes]}/${r.ano}${extra ? ` (${extra})` : ""}`
+    });
+
+    // 1. Chave de acesso (44 dígitos) — match exato, mais confiável
+    if (chave_acesso) {
+      const rows = await sql`
+        SELECT nf.mes, nf.ano, nf.quinzena, u.username, u.name AS user_name
+        FROM notas_fiscais nf JOIN users u ON u.id = nf.user_id
+        WHERE nf.chave_acesso = ${chave_acesso}
+          AND (nf.deleted IS NULL OR nf.deleted = FALSE)
+          AND NOT (nf.user_id = ${uid} AND nf.mes = ${excMes} AND nf.ano = ${excAno} AND nf.quinzena = ${excQz})
+      `;
+      if (rows.length) return res.json(_fmt(rows[0], "mesma chave de acesso"));
     }
+
+    // 2. Número da NF + CNPJ do emissor
+    if (numero_nf && cnpj) {
+      const rows = await sql`
+        SELECT nf.mes, nf.ano, nf.quinzena, u.username, u.name AS user_name
+        FROM notas_fiscais nf JOIN users u ON u.id = nf.user_id
+        WHERE nf.numero_nf = ${numero_nf} AND nf.cnpj = ${cnpj}
+          AND (nf.deleted IS NULL OR nf.deleted = FALSE)
+          AND NOT (nf.user_id = ${uid} AND nf.mes = ${excMes} AND nf.ano = ${excAno} AND nf.quinzena = ${excQz})
+      `;
+      if (rows.length) return res.json(_fmt(rows[0], `NF ${numero_nf} já utilizada`));
+    }
+
+    // 3. Valor + CNPJ + emissor + data de emissão
+    if (valor && cnpj && emissor && emissao) {
+      const rows = await sql`
+        SELECT nf.mes, nf.ano, nf.quinzena, u.username, u.name AS user_name
+        FROM notas_fiscais nf JOIN users u ON u.id = nf.user_id
+        WHERE nf.valor = ${valor} AND nf.cnpj = ${cnpj}
+          AND nf.emissor = ${emissor} AND nf.emissao = ${emissao}
+          AND (nf.deleted IS NULL OR nf.deleted = FALSE)
+          AND NOT (nf.user_id = ${uid} AND nf.mes = ${excMes} AND nf.ano = ${excAno} AND nf.quinzena = ${excQz})
+      `;
+      if (rows.length) return res.json(_fmt(rows[0], `mesmo valor ${valor} do emissor`));
+    }
+
+    res.json({ duplicata: false });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
