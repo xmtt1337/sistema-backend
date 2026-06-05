@@ -1503,32 +1503,23 @@ app.get("/bipagem/buscar-cep", verificarToken, verificarNaoEntregador, async (re
 
 app.get("/bipagem/desempenho", verificarToken, verificarAdmin, async (req, res) => {
   try {
-    const { mes, ano } = req.query;
-    const rows = (mes && ano)
-      ? await sql`
-          SELECT usuario_nome,
-            COUNT(*)::int AS total,
-            COUNT(CASE WHEN transportadora='loggi'  THEN 1 END)::int AS loggi,
-            COUNT(CASE WHEN transportadora='anjun'  THEN 1 END)::int AS anjun,
-            COUNT(CASE WHEN transportadora='jt'     THEN 1 END)::int AS jt,
-            COUNT(CASE WHEN transportadora='imile'  THEN 1 END)::int AS imile,
-            COUNT(CASE WHEN transportadora='shopee' THEN 1 END)::int AS shopee
-          FROM bipagens_log
-          WHERE usuario_nome IS NOT NULL
-            AND EXTRACT(MONTH FROM bipado_em) = ${parseInt(mes)}
-            AND EXTRACT(YEAR  FROM bipado_em) = ${parseInt(ano)}
-          GROUP BY usuario_nome ORDER BY total DESC`
-      : await sql`
-          SELECT usuario_nome,
-            COUNT(*)::int AS total,
-            COUNT(CASE WHEN transportadora='loggi'  THEN 1 END)::int AS loggi,
-            COUNT(CASE WHEN transportadora='anjun'  THEN 1 END)::int AS anjun,
-            COUNT(CASE WHEN transportadora='jt'     THEN 1 END)::int AS jt,
-            COUNT(CASE WHEN transportadora='imile'  THEN 1 END)::int AS imile,
-            COUNT(CASE WHEN transportadora='shopee' THEN 1 END)::int AS shopee
-          FROM bipagens_log
-          WHERE usuario_nome IS NOT NULL
-          GROUP BY usuario_nome ORDER BY total DESC`;
+    const { mes, ano, transportadora } = req.query;
+    const hasMes    = mes && ano;
+    const hasTransp = transportadora && transportadora !== 'todas';
+    const rows = await sql`
+      SELECT usuario_nome,
+        COUNT(*)::int AS total,
+        COUNT(CASE WHEN transportadora='loggi'  THEN 1 END)::int AS loggi,
+        COUNT(CASE WHEN transportadora='anjun'  THEN 1 END)::int AS anjun,
+        COUNT(CASE WHEN transportadora='jt'     THEN 1 END)::int AS jt,
+        COUNT(CASE WHEN transportadora='imile'  THEN 1 END)::int AS imile,
+        COUNT(CASE WHEN transportadora='shopee' THEN 1 END)::int AS shopee
+      FROM bipagens_log
+      WHERE usuario_nome IS NOT NULL
+        AND (${hasMes}  = false OR EXTRACT(MONTH FROM bipado_em) = ${hasMes  ? parseInt(mes)          : 0})
+        AND (${hasMes}  = false OR EXTRACT(YEAR  FROM bipado_em) = ${hasMes  ? parseInt(ano)          : 0})
+        AND (${hasTransp} = false OR transportadora = ${hasTransp ? transportadora : ''})
+      GROUP BY usuario_nome ORDER BY total DESC`;
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
