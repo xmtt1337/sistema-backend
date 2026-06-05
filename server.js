@@ -1509,8 +1509,8 @@ app.get("/bipagem/buscar-cep", verificarToken, verificarNaoEntregador, async (re
 app.get("/bipagem/desempenho", verificarToken, verificarGestor, async (req, res) => {
   try {
     const { mes, ano, transportadora } = req.query;
-    const hasMes    = mes && ano;
-    const hasTransp = transportadora && transportadora !== 'todas';
+    const hasMes    = !!(mes && ano);
+    const hasTransp = !!(transportadora && transportadora !== 'todas');
     const rows = await sql`
       SELECT usuario_nome,
         COUNT(*)::int AS total,
