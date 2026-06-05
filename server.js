@@ -1503,8 +1503,8 @@ app.get("/bipagem/buscar-cep", verificarToken, verificarNaoEntregador, async (re
 
 app.get("/bipagem/desempenho", verificarToken, verificarAdmin, async (req, res) => {
   try {
-    const { de, ate } = req.query;
-    const rows = (de && ate)
+    const { mes, ano } = req.query;
+    const rows = (mes && ano)
       ? await sql`
           SELECT usuario_nome,
             COUNT(*)::int AS total,
@@ -1515,8 +1515,8 @@ app.get("/bipagem/desempenho", verificarToken, verificarAdmin, async (req, res) 
             COUNT(CASE WHEN transportadora='shopee' THEN 1 END)::int AS shopee
           FROM bipagens_log
           WHERE usuario_nome IS NOT NULL
-            AND bipado_em >= ${de}::date
-            AND bipado_em <  (${ate}::date + interval '1 day')
+            AND EXTRACT(MONTH FROM bipado_em) = ${parseInt(mes)}
+            AND EXTRACT(YEAR  FROM bipado_em) = ${parseInt(ano)}
           GROUP BY usuario_nome ORDER BY total DESC`
       : await sql`
           SELECT usuario_nome,
