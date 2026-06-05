@@ -1452,6 +1452,28 @@ app.get("/pedidos/buscar", verificarToken, verificarNaoEntregador, async (req, r
   }
 });
 
+app.get("/pedidos/lista", verificarToken, verificarNaoEntregador, async (req, res) => {
+  try {
+    const { de, ate } = req.query;
+    const rows = (de && ate)
+      ? await sql`
+          SELECT codigo, entregador, transportadora, cidade, cep, bipado_em, usuario_nome
+          FROM bipagens_log
+          WHERE bipado_em >= ${de}::date
+            AND bipado_em <  (${ate}::date + interval '1 day')
+          ORDER BY bipado_em DESC
+          LIMIT 5000`
+      : await sql`
+          SELECT codigo, entregador, transportadora, cidade, cep, bipado_em, usuario_nome
+          FROM bipagens_log
+          ORDER BY bipado_em DESC
+          LIMIT 1000`;
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/bipagem/buscar-cep", verificarToken, verificarNaoEntregador, async (req, res) => {
   try {
     const { cep } = req.query;
