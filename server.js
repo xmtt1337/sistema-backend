@@ -1501,6 +1501,40 @@ app.get("/bipagem/buscar-cep", verificarToken, verificarNaoEntregador, async (re
   }
 });
 
+app.get("/bipagem/desempenho", verificarToken, verificarAdmin, async (req, res) => {
+  try {
+    const { de, ate } = req.query;
+    const rows = (de && ate)
+      ? await sql`
+          SELECT usuario_nome,
+            COUNT(*)::int AS total,
+            COUNT(CASE WHEN transportadora='loggi'  THEN 1 END)::int AS loggi,
+            COUNT(CASE WHEN transportadora='anjun'  THEN 1 END)::int AS anjun,
+            COUNT(CASE WHEN transportadora='jt'     THEN 1 END)::int AS jt,
+            COUNT(CASE WHEN transportadora='imile'  THEN 1 END)::int AS imile,
+            COUNT(CASE WHEN transportadora='shopee' THEN 1 END)::int AS shopee
+          FROM bipagens_log
+          WHERE usuario_nome IS NOT NULL
+            AND bipado_em >= ${de}::date
+            AND bipado_em <  (${ate}::date + interval '1 day')
+          GROUP BY usuario_nome ORDER BY total DESC`
+      : await sql`
+          SELECT usuario_nome,
+            COUNT(*)::int AS total,
+            COUNT(CASE WHEN transportadora='loggi'  THEN 1 END)::int AS loggi,
+            COUNT(CASE WHEN transportadora='anjun'  THEN 1 END)::int AS anjun,
+            COUNT(CASE WHEN transportadora='jt'     THEN 1 END)::int AS jt,
+            COUNT(CASE WHEN transportadora='imile'  THEN 1 END)::int AS imile,
+            COUNT(CASE WHEN transportadora='shopee' THEN 1 END)::int AS shopee
+          FROM bipagens_log
+          WHERE usuario_nome IS NOT NULL
+          GROUP BY usuario_nome ORDER BY total DESC`;
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/bipagem/cep-status", verificarToken, verificarNaoEntregador, async (req, res) => {
   try {
     const r = await sql`SELECT COUNT(*) AS total FROM cep_entregadores`;
