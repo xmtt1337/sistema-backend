@@ -1424,9 +1424,10 @@ app.post("/bipagem/registrar", verificarToken, verificarNaoEntregador, async (re
   try {
     const { codigo, entregador, transportadora, cidade, cep } = req.body;
     if (!codigo) return res.status(400).json({ error: "Código obrigatório." });
+    const usuario_nome = req.user.name || req.user.username || null;
     await sql`
-      INSERT INTO bipagens_log (codigo, entregador, transportadora, cidade, cep, user_id)
-      VALUES (${codigo}, ${entregador || null}, ${transportadora || null}, ${cidade || null}, ${cep || null}, ${req.user.id})
+      INSERT INTO bipagens_log (codigo, entregador, transportadora, cidade, cep, user_id, usuario_nome)
+      VALUES (${codigo}, ${entregador || null}, ${transportadora || null}, ${cidade || null}, ${cep || null}, ${req.user.id}, ${usuario_nome})
     `;
     res.json({ success: true });
   } catch (err) {
@@ -1727,6 +1728,7 @@ async function initDB() {
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_bip_log_em ON bipagens_log (bipado_em DESC)`;
+  await sql`ALTER TABLE bipagens_log ADD COLUMN IF NOT EXISTS usuario_nome TEXT`;
   await sql`CREATE INDEX IF NOT EXISTS idx_alim_pac_idpac ON alimentar_pacotes (UPPER(id_pacote))`;
   await sql`
     CREATE TABLE IF NOT EXISTS alimentar_arquivos (
