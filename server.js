@@ -98,30 +98,19 @@ function verificarGestorOuUser(req, res, next) {
   next();
 }
 
-// ── Sistema de Níveis ──────────────────────────────────────────────────────
-const NIVEIS = [
-  { nivel: 1,  nome: "Iniciante",    min: 0     },
-  { nivel: 2,  nome: "Operador",     min: 100   },
-  { nivel: 3,  nome: "Experiente",   min: 300   },
-  { nivel: 4,  nome: "Veterano",     min: 600   },
-  { nivel: 5,  nome: "Especialista", min: 1000  },
-  { nivel: 6,  nome: "Expert",       min: 2000  },
-  { nivel: 7,  nome: "Mestre",       min: 3500  },
-  { nivel: 8,  nome: "Elite",        min: 6000  },
-  { nivel: 9,  nome: "Lendário",     min: 10000 },
-  { nivel: 10, nome: "Supremo",      min: 20000 },
-];
+// ── Sistema de Níveis (Nv 1-100) ───────────────────────────────────────────
+// Para subir do nível N: precisa de 100*N bips únicos
+// Acumulado mínimo para chegar ao nível N: 50*N*(N-1)
+// Fórmula inversa: N = floor((1 + sqrt(1 + total/12.5)) / 2), cap 100
 function calcNivel(total) {
-  const atual = [...NIVEIS].reverse().find(n => total >= n.min) || NIVEIS[0];
-  const idx   = NIVEIS.indexOf(atual);
-  const prox  = NIVEIS[idx + 1] || null;
+  const nivel = Math.min(100, Math.max(1, Math.floor((1 + Math.sqrt(1 + total / 12.5)) / 2)));
+  const minAtual = 50 * nivel * (nivel - 1);
+  const minProx  = nivel < 100 ? 50 * (nivel + 1) * nivel : null;
   return {
-    nivel:       atual.nivel,
-    nome:        atual.nome,
-    proxNivel:   prox?.nivel  || null,
-    proxNome:    prox?.nome   || null,
-    faltam:      prox ? Math.max(0, prox.min - total) : 0,
-    progresso:   prox ? Math.min(100, Math.round(((total - atual.min) / (prox.min - atual.min)) * 100)) : 100,
+    nivel,
+    proxNivel:     nivel < 100 ? nivel + 1 : null,
+    faltam:        minProx !== null ? minProx - total : 0,
+    progresso:     minProx !== null ? Math.min(100, Math.round((total - minAtual) / (100 * nivel) * 100)) : 100,
     totalBipagens: total,
   };
 }
@@ -1509,8 +1498,8 @@ app.post("/bipagem/registrar", verificarToken, verificarNaoEntregador, async (re
       INSERT INTO bipagens_log (codigo, entregador, transportadora, cidade, cep, user_id, usuario_nome)
       VALUES (${codigo}, ${entregador || null}, ${transportadora || null}, ${cidade || null}, ${cep || null}, ${req.user.id}, ${usuario_nome})
     `;
-    // Atualiza nivel do usuário
-    const [cnt] = await sql`SELECT COUNT(*)::int AS total FROM bipagens_log WHERE user_id = ${req.user.id}`;
+    // Atualiza nivel do usuário (sem duplicatas)
+    const [cnt] = await sql`SELECT COUNT(DISTINCT codigo)::int AS total FROM bipagens_log WHERE user_id = ${req.user.id}`;
     const { nivel } = calcNivel(cnt?.total || 0);
     await sql`UPDATE users SET nivel = ${nivel} WHERE id = ${req.user.id}`;
     res.json({ success: true });
@@ -1617,18 +1606,18 @@ app.get("/bipagem/meu-desempenho", verificarToken, async (req, res) => {
     const mes = now.getMonth() + 1;
     const ano = now.getFullYear();
 
-    // Conta própria separada — nunca depende do JOIN
+    // Conta própria separada — sem duplicatas
     const [meuRow] = await sql`
-      SELECT COUNT(*)::int AS total
+      SELECT COUNT(DISTINCT codigo)::int AS total
       FROM bipagens_log
       WHERE user_id = ${userId}
         AND EXTRACT(MONTH FROM bipado_em) = ${mes}
         AND EXTRACT(YEAR  FROM bipado_em) = ${ano}`;
     const total = meuRow?.total || 0;
 
-    // Ranking geral com nomes
+    // Ranking geral com nomes — sem duplicatas por usuário
     const ranking = await sql`
-      SELECT b.user_id, COALESCE(u.name, u.username) AS nome, COUNT(*)::int AS total
+      SELECT b.user_id, COALESCE(u.name, u.username) AS nome, COUNT(DISTINCT b.codigo)::int AS total
       FROM bipagens_log b
       JOIN users u ON u.id = b.user_id
       WHERE EXTRACT(MONTH FROM b.bipado_em) = ${mes}
@@ -1671,7 +1660,7 @@ app.get("/bipagem/meu-desempenho", verificarToken, async (req, res) => {
 
 app.get("/meu-nivel", verificarToken, async (req, res) => {
   try {
-    const [row] = await sql`SELECT COUNT(*)::int AS total FROM bipagens_log WHERE user_id = ${req.user.id}`;
+    const [row] = await sql`SELECT COUNT(DISTINCT codigo)::int AS total FROM bipagens_log WHERE user_id = ${req.user.id}`;
     res.json(calcNivel(row?.total || 0));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1685,17 +1674,17 @@ app.get("/meu-perfil", verificarToken, async (req, res) => {
     const mes = now.getMonth() + 1;
     const ano = now.getFullYear();
 
-    const [total] = await sql`SELECT COUNT(*)::int AS total FROM bipagens_log WHERE user_id = ${userId}`;
+    const [total] = await sql`SELECT COUNT(DISTINCT codigo)::int AS total FROM bipagens_log WHERE user_id = ${userId}`;
     const nivelInfo = calcNivel(total?.total || 0);
 
     const [mensal] = await sql`
       SELECT
-        COUNT(*)::int                                                  AS total,
-        COUNT(CASE WHEN transportadora='loggi'  THEN 1 END)::int      AS loggi,
-        COUNT(CASE WHEN transportadora='anjun'  THEN 1 END)::int      AS anjun,
-        COUNT(CASE WHEN transportadora='jt'     THEN 1 END)::int      AS jt,
-        COUNT(CASE WHEN transportadora='imile'  THEN 1 END)::int      AS imile,
-        COUNT(CASE WHEN transportadora='shopee' THEN 1 END)::int      AS shopee
+        COUNT(DISTINCT codigo)::int                                                       AS total,
+        COUNT(DISTINCT CASE WHEN transportadora='loggi'  THEN codigo END)::int           AS loggi,
+        COUNT(DISTINCT CASE WHEN transportadora='anjun'  THEN codigo END)::int           AS anjun,
+        COUNT(DISTINCT CASE WHEN transportadora='jt'     THEN codigo END)::int           AS jt,
+        COUNT(DISTINCT CASE WHEN transportadora='imile'  THEN codigo END)::int           AS imile,
+        COUNT(DISTINCT CASE WHEN transportadora='shopee' THEN codigo END)::int           AS shopee
       FROM bipagens_log
       WHERE user_id = ${userId}
         AND EXTRACT(MONTH FROM bipado_em) = ${mes}
