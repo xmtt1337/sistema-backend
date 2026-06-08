@@ -1617,6 +1617,16 @@ app.get("/bipagem/meu-desempenho", verificarToken, async (req, res) => {
     const mes = now.getMonth() + 1;
     const ano = now.getFullYear();
 
+    // Conta própria separada — nunca depende do JOIN
+    const [meuRow] = await sql`
+      SELECT COUNT(*)::int AS total
+      FROM bipagens_log
+      WHERE user_id = ${userId}
+        AND EXTRACT(MONTH FROM bipado_em) = ${mes}
+        AND EXTRACT(YEAR  FROM bipado_em) = ${ano}`;
+    const total = meuRow?.total || 0;
+
+    // Ranking geral com nomes
     const ranking = await sql`
       SELECT b.user_id, COALESCE(u.name, u.username) AS nome, COUNT(*)::int AS total
       FROM bipagens_log b
@@ -1627,12 +1637,22 @@ app.get("/bipagem/meu-desempenho", verificarToken, async (req, res) => {
       GROUP BY b.user_id, u.name, u.username
       ORDER BY total DESC`;
 
-    const idx    = ranking.findIndex(r => r.user_id === userId);
-    const posicao = idx >= 0 ? idx + 1 : ranking.length + 1;
-    const total   = idx >= 0 ? ranking[idx].total : 0;
-    const totalUsuarios = ranking.length || 1;
+    // Compara como string para evitar mismatch number/string do JWT
+    const idx = ranking.findIndex(r => String(r.user_id) === String(userId));
 
-    const acima = idx > 0 ? ranking[idx - 1] : null;
+    let posicao, totalUsuarios, acima;
+
+    if (idx >= 0) {
+      posicao       = idx + 1;
+      totalUsuarios = ranking.length;
+      acima         = idx > 0 ? ranking[idx - 1] : null;
+    } else {
+      // Usuário tem bipagens mas não apareceu no JOIN — trata como último
+      posicao       = ranking.length + 1;
+      totalUsuarios = ranking.length + 1;
+      acima         = ranking.length > 0 ? ranking[ranking.length - 1] : null;
+    }
+
     const faltam = acima ? Math.max(0, acima.total - total + 1) : 0;
 
     res.json({
