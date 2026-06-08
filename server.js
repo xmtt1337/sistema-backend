@@ -1577,6 +1577,61 @@ app.get("/bipagem/desempenho", verificarToken, verificarGestor, async (req, res)
   }
 });
 
+app.get("/bipagem/meu-desempenho", verificarToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const now = new Date();
+    const mes = now.getMonth() + 1;
+    const ano = now.getFullYear();
+
+    const [meuRow] = await sql`
+      SELECT COUNT(*)::int AS total
+      FROM bipagens_log
+      WHERE user_id = ${userId}
+        AND EXTRACT(MONTH FROM bipado_em) = ${mes}
+        AND EXTRACT(YEAR  FROM bipado_em) = ${ano}`;
+
+    const ranking = await sql`
+      SELECT user_id, COUNT(*)::int AS total
+      FROM bipagens_log
+      WHERE EXTRACT(MONTH FROM bipado_em) = ${mes}
+        AND EXTRACT(YEAR  FROM bipado_em) = ${ano}
+        AND user_id IS NOT NULL
+      GROUP BY user_id
+      ORDER BY total DESC`;
+
+    const posicao = ranking.findIndex(r => r.user_id === userId) + 1;
+    const totalUsuarios = ranking.length;
+
+    // tiers: Bronze<50, Prata<150, Ouro<300, Elite>=300
+    const tiers = [
+      { nome: "Bronze", min: 0,   max: 50  },
+      { nome: "Prata",  min: 50,  max: 150 },
+      { nome: "Ouro",   min: 150, max: 300 },
+      { nome: "Elite",  min: 300, max: null },
+    ];
+    const total = meuRow?.total || 0;
+    const tierAtual = tiers.findLast(t => total >= t.min) || tiers[0];
+    const proxTier  = tiers[tiers.indexOf(tierAtual) + 1] || null;
+
+    res.json({
+      total,
+      posicao: posicao || totalUsuarios + 1,
+      totalUsuarios,
+      mes,
+      ano,
+      tierAtual: tierAtual.nome,
+      proxTier: proxTier ? proxTier.nome : null,
+      faltamProxTier: proxTier ? Math.max(0, proxTier.min - total) : 0,
+      progressoTier: proxTier
+        ? Math.min(100, Math.round(((total - tierAtual.min) / (proxTier.min - tierAtual.min)) * 100))
+        : 100,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/bipagem/cep-status", verificarToken, verificarNaoEntregador, async (req, res) => {
   try {
     const r = await sql`SELECT COUNT(*) AS total FROM cep_entregadores`;
