@@ -83,7 +83,7 @@ function verificarToken(req, res, next) {
 }
 
 function verificarAdmin(req, res, next) {
-  if (!["admin", "dev"].includes(req.user.role)) return res.status(403).json({ error: "Acesso negado" });
+  if (!["admin", "dev", "finance"].includes(req.user.role)) return res.status(403).json({ error: "Acesso negado" });
   next();
 }
 
@@ -91,6 +91,20 @@ function verificarGestor(req, res, next) {
   if (!["admin", "finance", "dev"].includes(req.user.role)) return res.status(403).json({ error: "Acesso negado" });
   next();
 }
+
+// Gestão de usuários: admin, finance, dev e user
+function verificarGestorOuUser(req, res, next) {
+  if (!["admin", "finance", "dev", "user"].includes(req.user.role)) return res.status(403).json({ error: "Acesso negado" });
+  next();
+}
+
+// Roles que cada role pode criar/atribuir
+const _rolesPermitidos = {
+  dev:     ["dev", "admin", "finance", "user", "entregador"],
+  finance: ["admin", "user", "entregador"],
+  admin:   ["user", "entregador"],
+  user:    ["user", "entregador"],
+};
 
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
@@ -1113,7 +1127,7 @@ app.get("/nota/verificar", verificarToken, async (req, res) => {
 });
 
 // ───── ADMIN USUÁRIOS ─────
-app.get("/admin/usuarios", verificarToken, verificarGestor, async (req, res) => {
+app.get("/admin/usuarios", verificarToken, verificarGestorOuUser, async (req, res) => {
   try {
     const { role } = req.query;
     const rows = role
@@ -1125,10 +1139,13 @@ app.get("/admin/usuarios", verificarToken, verificarGestor, async (req, res) => 
   }
 });
 
-app.post("/admin/usuarios", verificarToken, verificarAdmin, async (req, res) => {
+app.post("/admin/usuarios", verificarToken, verificarGestorOuUser, async (req, res) => {
   try {
     const { name, password, role } = req.body;
-    if (!name || !name.trim()) return res.status(400).json({ error: "O nome do entregador é obrigatório." });
+    if (!name || !name.trim()) return res.status(400).json({ error: "O nome é obrigatório." });
+    const targetRole = role || "entregador";
+    const allowed = _rolesPermitidos[req.user.role] || [];
+    if (!allowed.includes(targetRole)) return res.status(403).json({ error: "Sem permissão para criar usuário com este role." });
     const senha = (password || "").trim() || process.env.DEFAULT_PASSWORD || "GC2026";
     let username;
     for (let i = 0; i < 10; i++) {
@@ -1139,7 +1156,7 @@ app.post("/admin/usuarios", verificarToken, verificarAdmin, async (req, res) => 
     if (!username) return res.status(500).json({ error: "Não foi possível gerar um ID único. Tente novamente." });
     const rows = await sql`
       INSERT INTO users (username, name, password, role, active)
-      VALUES (${username}, ${name.trim()}, ${senha}, ${role || "entregador"}, TRUE)
+      VALUES (${username}, ${name.trim()}, ${senha}, ${targetRole}, TRUE)
       RETURNING id, username, name, role, active
     `;
     res.json(rows[0]);
@@ -1148,14 +1165,14 @@ app.post("/admin/usuarios", verificarToken, verificarAdmin, async (req, res) => 
   }
 });
 
-app.patch("/admin/usuarios/:id", verificarToken, verificarAdmin, async (req, res) => {
+app.patch("/admin/usuarios/:id", verificarToken, verificarGestorOuUser, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (id === req.user.id) return res.status(400).json({ error: "Não é possível alterar sua própria conta." });
     const { active, role } = req.body;
     if (role !== undefined) {
-      const validRoles = ["admin", "user", "entregador", "dev"];
-      if (!validRoles.includes(role)) return res.status(400).json({ error: "Role inválido." });
+      const allowed = _rolesPermitidos[req.user.role] || [];
+      if (!allowed.includes(role)) return res.status(403).json({ error: "Sem permissão para atribuir este role." });
       await sql`UPDATE users SET role = ${role} WHERE id = ${id}`;
     }
     if (active !== undefined) {
