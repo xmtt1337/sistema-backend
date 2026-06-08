@@ -1658,6 +1658,40 @@ app.get("/meu-nivel", verificarToken, async (req, res) => {
   }
 });
 
+app.get("/meu-perfil", verificarToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const now = new Date();
+    const mes = now.getMonth() + 1;
+    const ano = now.getFullYear();
+
+    const [total] = await sql`SELECT COUNT(*)::int AS total FROM bipagens_log WHERE user_id = ${userId}`;
+    const nivelInfo = calcNivel(total?.total || 0);
+
+    const [mensal] = await sql`
+      SELECT
+        COUNT(*)::int                                                  AS total,
+        COUNT(CASE WHEN transportadora='loggi'  THEN 1 END)::int      AS loggi,
+        COUNT(CASE WHEN transportadora='anjun'  THEN 1 END)::int      AS anjun,
+        COUNT(CASE WHEN transportadora='jt'     THEN 1 END)::int      AS jt,
+        COUNT(CASE WHEN transportadora='imile'  THEN 1 END)::int      AS imile,
+        COUNT(CASE WHEN transportadora='shopee' THEN 1 END)::int      AS shopee
+      FROM bipagens_log
+      WHERE user_id = ${userId}
+        AND EXTRACT(MONTH FROM bipado_em) = ${mes}
+        AND EXTRACT(YEAR  FROM bipado_em) = ${ano}`;
+
+    res.json({
+      ...nivelInfo,
+      mes,
+      ano,
+      mensal: mensal || { total: 0, loggi: 0, anjun: 0, jt: 0, imile: 0, shopee: 0 },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/bipagem/cep-status", verificarToken, verificarNaoEntregador, async (req, res) => {
   try {
     const r = await sql`SELECT COUNT(*) AS total FROM cep_entregadores`;
