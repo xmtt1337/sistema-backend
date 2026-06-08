@@ -98,6 +98,35 @@ function verificarGestorOuUser(req, res, next) {
   next();
 }
 
+// ── Sistema de Níveis ──────────────────────────────────────────────────────
+const NIVEIS = [
+  { nivel: 1,  nome: "Iniciante",    min: 0     },
+  { nivel: 2,  nome: "Operador",     min: 100   },
+  { nivel: 3,  nome: "Experiente",   min: 300   },
+  { nivel: 4,  nome: "Veterano",     min: 600   },
+  { nivel: 5,  nome: "Especialista", min: 1000  },
+  { nivel: 6,  nome: "Expert",       min: 2000  },
+  { nivel: 7,  nome: "Mestre",       min: 3500  },
+  { nivel: 8,  nome: "Elite",        min: 6000  },
+  { nivel: 9,  nome: "Lendário",     min: 10000 },
+  { nivel: 10, nome: "Supremo",      min: 20000 },
+];
+function calcNivel(total) {
+  const atual = [...NIVEIS].reverse().find(n => total >= n.min) || NIVEIS[0];
+  const idx   = NIVEIS.indexOf(atual);
+  const prox  = NIVEIS[idx + 1] || null;
+  return {
+    nivel:       atual.nivel,
+    nome:        atual.nome,
+    proxNivel:   prox?.nivel  || null,
+    proxNome:    prox?.nome   || null,
+    faltam:      prox ? Math.max(0, prox.min - total) : 0,
+    progresso:   prox ? Math.min(100, Math.round(((total - atual.min) / (prox.min - atual.min)) * 100)) : 100,
+    totalBipagens: total,
+  };
+}
+// ───────────────────────────────────────────────────────────────────────────
+
 // Roles que cada role pode criar/atribuir
 const _rolesPermitidos = {
   dev:     ["dev", "admin", "finance", "user", "entregador"],
@@ -1480,6 +1509,10 @@ app.post("/bipagem/registrar", verificarToken, verificarNaoEntregador, async (re
       INSERT INTO bipagens_log (codigo, entregador, transportadora, cidade, cep, user_id, usuario_nome)
       VALUES (${codigo}, ${entregador || null}, ${transportadora || null}, ${cidade || null}, ${cep || null}, ${req.user.id}, ${usuario_nome})
     `;
+    // Atualiza nivel do usuário
+    const [cnt] = await sql`SELECT COUNT(*)::int AS total FROM bipagens_log WHERE user_id = ${req.user.id}`;
+    const { nivel } = calcNivel(cnt?.total || 0);
+    await sql`UPDATE users SET nivel = ${nivel} WHERE id = ${req.user.id}`;
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1584,49 +1617,42 @@ app.get("/bipagem/meu-desempenho", verificarToken, async (req, res) => {
     const mes = now.getMonth() + 1;
     const ano = now.getFullYear();
 
-    const [meuRow] = await sql`
-      SELECT COUNT(*)::int AS total
-      FROM bipagens_log
-      WHERE user_id = ${userId}
-        AND EXTRACT(MONTH FROM bipado_em) = ${mes}
-        AND EXTRACT(YEAR  FROM bipado_em) = ${ano}`;
-
     const ranking = await sql`
-      SELECT user_id, COUNT(*)::int AS total
-      FROM bipagens_log
-      WHERE EXTRACT(MONTH FROM bipado_em) = ${mes}
-        AND EXTRACT(YEAR  FROM bipado_em) = ${ano}
-        AND user_id IS NOT NULL
-      GROUP BY user_id
+      SELECT b.user_id, COALESCE(u.name, u.username) AS nome, COUNT(*)::int AS total
+      FROM bipagens_log b
+      JOIN users u ON u.id = b.user_id
+      WHERE EXTRACT(MONTH FROM b.bipado_em) = ${mes}
+        AND EXTRACT(YEAR  FROM b.bipado_em) = ${ano}
+        AND b.user_id IS NOT NULL
+      GROUP BY b.user_id, u.name, u.username
       ORDER BY total DESC`;
 
-    const posicao = ranking.findIndex(r => r.user_id === userId) + 1;
-    const totalUsuarios = ranking.length;
+    const idx    = ranking.findIndex(r => r.user_id === userId);
+    const posicao = idx >= 0 ? idx + 1 : ranking.length + 1;
+    const total   = idx >= 0 ? ranking[idx].total : 0;
+    const totalUsuarios = ranking.length || 1;
 
-    // tiers: Bronze<50, Prata<150, Ouro<300, Elite>=300
-    const tiers = [
-      { nome: "Bronze", min: 0,   max: 50  },
-      { nome: "Prata",  min: 50,  max: 150 },
-      { nome: "Ouro",   min: 150, max: 300 },
-      { nome: "Elite",  min: 300, max: null },
-    ];
-    const total = meuRow?.total || 0;
-    const tierAtual = tiers.findLast(t => total >= t.min) || tiers[0];
-    const proxTier  = tiers[tiers.indexOf(tierAtual) + 1] || null;
+    const acima = idx > 0 ? ranking[idx - 1] : null;
+    const faltam = acima ? Math.max(0, acima.total - total + 1) : 0;
 
     res.json({
       total,
-      posicao: posicao || totalUsuarios + 1,
+      posicao,
       totalUsuarios,
       mes,
       ano,
-      tierAtual: tierAtual.nome,
-      proxTier: proxTier ? proxTier.nome : null,
-      faltamProxTier: proxTier ? Math.max(0, proxTier.min - total) : 0,
-      progressoTier: proxTier
-        ? Math.min(100, Math.round(((total - tierAtual.min) / (proxTier.min - tierAtual.min)) * 100))
-        : 100,
+      pessoaAcima: acima ? { nome: acima.nome.split(" ")[0], total: acima.total } : null,
+      faltam,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/meu-nivel", verificarToken, async (req, res) => {
+  try {
+    const [row] = await sql`SELECT COUNT(*)::int AS total FROM bipagens_log WHERE user_id = ${req.user.id}`;
+    res.json(calcNivel(row?.total || 0));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1834,6 +1860,7 @@ async function initDB() {
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE`;
   await sql`UPDATE users SET active = TRUE WHERE active IS NULL`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS nivel INT DEFAULT 1`;
   await sql`ALTER TABLE planilhas_quinzena ADD COLUMN IF NOT EXISTS ignora_nf BOOLEAN DEFAULT false`;
   await sql`
     UPDATE planilhas_quinzena SET ignora_nf = true
