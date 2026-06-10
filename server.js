@@ -1547,6 +1547,48 @@ app.get("/pedidos/lista", verificarToken, verificarNaoEntregador, async (req, re
   }
 });
 
+// ───── CONFERÊNCIA POR TRANSPORTADORA ─────
+app.post("/conferencia/analisar", verificarToken, verificarNaoEntregador, async (req, res) => {
+  try {
+    const { pacotes } = req.body;
+    if (!Array.isArray(pacotes) || !pacotes.length)
+      return res.status(400).json({ error: "Nenhum pacote enviado." });
+
+    const codigos = [...new Set(
+      pacotes.map(p => String(p.codigo || "").trim().toUpperCase()).filter(Boolean)
+    )];
+
+    const bipados = await sql`
+      SELECT DISTINCT UPPER(TRIM(codigo)) AS codigo
+      FROM bipagens_log
+      WHERE UPPER(TRIM(codigo)) = ANY(${codigos})
+    `;
+    const bipSet = new Set(bipados.map(b => b.codigo));
+
+    const cidadeMap = {};
+    for (const p of pacotes) {
+      const cod = String(p.codigo || "").trim().toUpperCase();
+      if (!cod) continue;
+      const cidade = (String(p.cidade || "").trim()) || "Não informada";
+      if (!cidadeMap[cidade]) cidadeMap[cidade] = { chegaram: 0, expedido: 0 };
+      cidadeMap[cidade].chegaram++;
+      if (bipSet.has(cod)) cidadeMap[cidade].expedido++;
+    }
+
+    const por_cidade = Object.entries(cidadeMap)
+      .map(([cidade, v]) => ({ cidade, chegaram: v.chegaram, expedido: v.expedido }))
+      .sort((a, b) => b.chegaram - a.chegaram);
+
+    res.json({
+      total_chegaram: pacotes.filter(p => String(p.codigo || "").trim()).length,
+      total_expedido: bipSet.size,
+      por_cidade
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/bipagem/buscar-cep", verificarToken, verificarNaoEntregador, async (req, res) => {
   try {
     const { cep } = req.query;
