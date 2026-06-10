@@ -1582,6 +1582,7 @@ app.post("/conferencia/analisar", verificarToken, verificarNaoEntregador, async 
     res.json({
       total_chegaram: pacotes.filter(p => String(p.codigo || "").trim()).length,
       total_expedido: bipSet.size,
+      expedidos_codigos: [...bipSet],
       por_cidade
     });
   } catch (err) {
