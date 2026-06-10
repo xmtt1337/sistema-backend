@@ -2094,10 +2094,6 @@ async function initDB() {
 
 // ───── AUTOMAÇÃO (sem JWT, chave simples) ─────
 app.post("/automacao/imile-upload", async (req, res) => {
-  const chave = req.headers["x-automation-key"];
-  if (!chave || chave !== process.env.AUTOMATION_KEY) {
-    return res.status(401).json({ error: "Chave de automação inválida." });
-  }
   try {
     const { nome_arquivo, conteudo_base64, mime_type, pacotes } = req.body;
     if (!nome_arquivo || !conteudo_base64)
