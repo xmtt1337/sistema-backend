@@ -2092,6 +2092,41 @@ async function initDB() {
   }
 }
 
+// ───── AUTOMAÇÃO (sem JWT, chave simples) ─────
+app.post("/automacao/imile-upload", async (req, res) => {
+  const chave = req.headers["x-automation-key"];
+  if (!chave || chave !== process.env.AUTOMATION_KEY) {
+    return res.status(401).json({ error: "Chave de automação inválida." });
+  }
+  try {
+    const { nome_arquivo, conteudo_base64, mime_type, pacotes } = req.body;
+    if (!nome_arquivo || !conteudo_base64)
+      return res.status(400).json({ error: "Dados incompletos." });
+
+    const tamanho_bytes = Math.round(conteudo_base64.length * 0.75);
+
+    const existentes = await sql`SELECT id FROM alimentar_arquivos WHERE transportadora = 'imile'`;
+    for (const e of existentes) {
+      await sql`DELETE FROM alimentar_pacotes WHERE arquivo_id = ${e.id}`;
+      await sql`DELETE FROM alimentar_arquivos WHERE id = ${e.id}`;
+    }
+
+    const rows = await sql`
+      INSERT INTO alimentar_arquivos (transportadora, nome_arquivo, conteudo_base64, mime_type, tamanho_bytes)
+      VALUES ('imile', ${nome_arquivo}, ${conteudo_base64}, ${mime_type || null}, ${tamanho_bytes})
+      RETURNING id, transportadora, nome_arquivo, mime_type, tamanho_bytes, uploaded_at
+    `;
+    const arquivoId = rows[0].id;
+    const pacotes_inseridos = Array.isArray(pacotes) && pacotes.length
+      ? await bulkInsertPacotes(arquivoId, "imile", pacotes)
+      : 0;
+
+    res.json({ success: true, arquivo: rows[0], pacotes_inseridos });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log("Servidor rodando na porta " + PORT);
