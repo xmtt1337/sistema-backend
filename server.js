@@ -1981,14 +1981,17 @@ app.get("/antecipacoes", verificarToken, async (req, res) => {
 app.get("/admin/antecipacoes", verificarToken, verificarGestor, async (req, res) => {
   try {
     const { status, mes, ano, quinzena } = req.query;
-    const rows = await sql`
-      SELECT * FROM antecipacoes
-      WHERE (${status || null} IS NULL OR status = ${status || null})
-        AND (${mes ? parseInt(mes) : null}::int IS NULL OR mes = ${mes ? parseInt(mes) : null}::int)
-        AND (${ano ? parseInt(ano) : null}::int IS NULL OR ano = ${ano ? parseInt(ano) : null}::int)
-        AND (${quinzena ? parseInt(quinzena) : null}::int IS NULL OR quinzena = ${quinzena ? parseInt(quinzena) : null}::int)
-      ORDER BY data_solicitacao DESC
-    `;
+    const m = mes      ? parseInt(mes)      : null;
+    const a = ano      ? parseInt(ano)      : null;
+    const q = quinzena ? parseInt(quinzena) : null;
+    let rows;
+    if (m && a && q && status) {
+      rows = await sql`SELECT * FROM antecipacoes WHERE mes=${m} AND ano=${a} AND quinzena=${q} AND status=${status} ORDER BY data_solicitacao DESC`;
+    } else if (m && a && q) {
+      rows = await sql`SELECT * FROM antecipacoes WHERE mes=${m} AND ano=${a} AND quinzena=${q} ORDER BY data_solicitacao DESC`;
+    } else {
+      rows = await sql`SELECT * FROM antecipacoes ORDER BY data_solicitacao DESC`;
+    }
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
