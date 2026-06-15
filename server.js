@@ -279,10 +279,11 @@ app.get("/admin/pagamentos", verificarToken, verificarGestor, async (req, res) =
     // 3. nome real bate com trampay_entregadores.nome → pega chave_pix e tipo_pix da Trampay
     // 4. documento vem da col DOCUMENTO do TERCEIRIZADOS
 
-    const [{ resumo }, cadastroRows, trampayRows] = await Promise.all([
+    const [{ resumo }, cadastroRows, trampayRows, antecRows] = await Promise.all([
       lerPlanilha(planilha[0].spreadsheet_id),
       lerCadastroPix(),
-      sql`SELECT nome, chave_pix, tipo_pix FROM trampay_entregadores`
+      sql`SELECT nome, chave_pix, tipo_pix FROM trampay_entregadores`,
+      sql`SELECT usuario_nome, valor_antecipado FROM antecipacoes WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)} AND status = 'aprovada'`
     ]);
 
     // ── Planilha de fechamento ──
@@ -328,18 +329,31 @@ app.get("/admin/pagamentos", verificarToken, verificarGestor, async (req, res) =
       trampayMap[normBasico(t.nome)] = { chave_pix: t.chave_pix || "", tipo_pix: t.tipo_pix || "" };
     });
 
+    // antecipMap: nome normalizado → total antecipado aprovado
+    const antecipMap = {};
+    antecRows.forEach(a => {
+      const k = normNome(a.usuario_nome);
+      antecipMap[k] = (antecipMap[k] || 0) + Number(a.valor_antecipado);
+    });
+
     const result = resumo.slice(2)
       .map(l => {
         const nome = String(l[nomeIdxF] || "").trim();
         if (!nome || nomeIgnorado(nome)) return null;
-        const totalNum = totalIdxF >= 0 ? num(String(l[totalIdxF] || "")) : 0;
+        const totalNum     = totalIdxF >= 0 ? num(String(l[totalIdxF] || "")) : 0;
         if (totalNum <= 0) return null;
-        const cad      = cadMap[normNome(nome)] || {};
-        const trampay  = trampayMap[normBasico(cad.nomeReal || nome)] || {};
+        const cad          = cadMap[normNome(nome)] || {};
+        const trampay      = trampayMap[normBasico(cad.nomeReal || nome)] || {};
+        const antecipado   = antecipMap[normNome(nome)] || 0;
+        const liquidoNum   = Math.max(0, totalNum - antecipado);
         return {
           nome,
-          total:     moeda(totalNum),
-          total_num: totalNum,
+          total:          moeda(totalNum),
+          total_num:      totalNum,
+          antecipado:     moeda(antecipado),
+          antecipado_num: antecipado,
+          liquido:        moeda(liquidoNum),
+          liquido_num:    liquidoNum,
           documento: cad.documento    || "",
           chave_pix: trampay.chave_pix || "",
           tipo_pix:  trampay.tipo_pix  || "",
@@ -363,11 +377,18 @@ app.get("/admin/pagamentos/csv", verificarToken, verificarGestor, async (req, re
     `;
     if (!planilha.length) return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
 
-    const [{ resumo }, cadastroRows, trampayRows] = await Promise.all([
+    const [{ resumo }, cadastroRows, trampayRows, antecRowsCsv] = await Promise.all([
       lerPlanilha(planilha[0].spreadsheet_id),
       lerCadastroPix(),
-      sql`SELECT nome, id_externo, chave_pix, tipo_pix FROM trampay_entregadores`
+      sql`SELECT nome, id_externo, chave_pix, tipo_pix FROM trampay_entregadores`,
+      sql`SELECT usuario_nome, valor_antecipado FROM antecipacoes WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)} AND status = 'aprovada'`
     ]);
+
+    const antecipMapCsv = {};
+    antecRowsCsv.forEach(a => {
+      const k = normNome(a.usuario_nome);
+      antecipMapCsv[k] = (antecipMapCsv[k] || 0) + Number(a.valor_antecipado);
+    });
 
     const cabF      = (resumo[1] || []).map(c => String(c || "").trim().replace(/\n/g, " ").replace(/  +/g, " "));
     const nomeIdxF  = cabF.indexOf("NOME");
@@ -429,16 +450,19 @@ app.get("/admin/pagamentos/csv", verificarToken, verificarGestor, async (req, re
       if (totalNum <= 0) return null;
 
       // Busca no TERCEIRIZADOS pelo nome do sistema → pega nomeReal e documento
-      const cad        = cadMap[normNome(titulo)] || {};
+      const cad         = cadMap[normNome(titulo)] || {};
       const nomeTrampay = cad.nomeReal || titulo;
 
       // Busca na Trampay pelo nomeReal
       const trampay = trampayMap[normBasico(nomeTrampay)] || {};
 
+      const antecipado = antecipMapCsv[normNome(titulo)] || 0;
+      const liquidoNum = Math.max(0, totalNum - antecipado);
+
       return {
         titulo,
         documento:      cad.documento     || "",
-        valor:          totalNum.toFixed(2).replace(".", ","),
+        valor:          liquidoNum.toFixed(2).replace(".", ","),
         descricao,
         chave_pix:      trampay.chave_pix  || "",
         chave_pix_tipo: trampay.tipo_pix   || "",
@@ -1915,6 +1939,83 @@ app.get("/bipagem/buscar", verificarToken, verificarNaoEntregador, async (req, r
   }
 });
 
+// ───── ANTECIPAÇÕES ─────
+
+app.post("/antecipacoes", verificarToken, async (req, res) => {
+  try {
+    const { quinzena, mes, ano, valor_nf, valor_antecipado, numero_nf, cnpj, telefone } = req.body;
+    const vAnt = parseFloat(valor_antecipado);
+    const vNF  = valor_nf != null ? parseFloat(valor_nf) : null;
+    if (!vAnt || vAnt <= 0) return res.status(400).json({ error: "Valor antecipado inválido." });
+    if (vNF !== null && vAnt > vNF) return res.status(400).json({ error: "Valor solicitado supera o valor da nota fiscal." });
+    const cnpjLimpo = cnpj ? String(cnpj).replace(/\D/g, "") : null;
+    if (cnpjLimpo && cnpjLimpo.length !== 14) return res.status(400).json({ error: "CNPJ inválido." });
+    await sql`
+      INSERT INTO antecipacoes
+        (usuario_id, usuario_nome, quinzena, mes, ano, valor_nf, valor_antecipado, numero_nf, cnpj, telefone)
+      VALUES
+        (${req.user.id}, ${req.user.name || req.user.username},
+         ${parseInt(quinzena)}, ${parseInt(mes)}, ${parseInt(ano)},
+         ${vNF}, ${vAnt}, ${numero_nf || null}, ${cnpjLimpo || null}, ${telefone || null})
+    `;
+    res.json({ success: true });
+  } catch (err) {
+    if (err.code === "23505") return res.status(409).json({ error: "Você já possui uma solicitação para esta quinzena." });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/antecipacoes", verificarToken, async (req, res) => {
+  try {
+    const rows = await sql`
+      SELECT * FROM antecipacoes
+      WHERE usuario_id = ${req.user.id}
+      ORDER BY ano DESC, mes DESC, quinzena DESC
+    `;
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/admin/antecipacoes", verificarToken, verificarGestor, async (req, res) => {
+  try {
+    const { status, mes, ano, quinzena } = req.query;
+    const rows = await sql`
+      SELECT * FROM antecipacoes
+      WHERE (${status || null} IS NULL OR status = ${status || null})
+        AND (${mes ? parseInt(mes) : null}::int IS NULL OR mes = ${mes ? parseInt(mes) : null}::int)
+        AND (${ano ? parseInt(ano) : null}::int IS NULL OR ano = ${ano ? parseInt(ano) : null}::int)
+        AND (${quinzena ? parseInt(quinzena) : null}::int IS NULL OR quinzena = ${quinzena ? parseInt(quinzena) : null}::int)
+      ORDER BY data_solicitacao DESC
+    `;
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/admin/antecipacoes/:id", verificarToken, verificarGestor, async (req, res) => {
+  try {
+    const { status, observacao } = req.body;
+    if (!["aprovada", "rejeitada", "paga"].includes(status)) return res.status(400).json({ error: "Status inválido." });
+    const aprovadoPor = req.user.name || req.user.username;
+    const rows = await sql`
+      UPDATE antecipacoes
+      SET status = ${status},
+          observacao = ${observacao || null},
+          data_aprovacao = NOW(),
+          aprovado_por = ${aprovadoPor}
+      WHERE id = ${parseInt(req.params.id)}
+      RETURNING *
+    `;
+    if (!rows.length) return res.status(404).json({ error: "Solicitação não encontrada." });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 async function initDB() {
   await sql`CREATE EXTENSION IF NOT EXISTS unaccent`;
   await sql`
@@ -2024,6 +2125,40 @@ async function initDB() {
       uploaded_by     INTEGER,
       uploaded_at     TIMESTAMP DEFAULT NOW()
     )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS antecipacoes (
+      id               SERIAL PRIMARY KEY,
+      usuario_id       INTEGER NOT NULL,
+      usuario_nome     TEXT    NOT NULL,
+      quinzena         INTEGER NOT NULL,
+      mes              INTEGER NOT NULL,
+      ano              INTEGER NOT NULL,
+      valor_nf         NUMERIC,
+      valor_antecipado NUMERIC NOT NULL,
+      numero_nf        TEXT,
+      cnpj             TEXT,
+      telefone         TEXT,
+      status           TEXT    NOT NULL DEFAULT 'pendente',
+      observacao       TEXT,
+      data_solicitacao TIMESTAMP DEFAULT NOW(),
+      data_aprovacao   TIMESTAMP,
+      aprovado_por     TEXT
+    )
+  `;
+  await sql`ALTER TABLE antecipacoes ADD COLUMN IF NOT EXISTS observacao TEXT`;
+  await sql`ALTER TABLE antecipacoes ADD COLUMN IF NOT EXISTS data_aprovacao TIMESTAMP`;
+  await sql`ALTER TABLE antecipacoes ADD COLUMN IF NOT EXISTS aprovado_por TEXT`;
+  await sql`
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'antecipacoes_usuario_quinzena_key'
+      ) THEN
+        ALTER TABLE antecipacoes ADD CONSTRAINT antecipacoes_usuario_quinzena_key
+          UNIQUE (usuario_id, quinzena, mes, ano);
+      END IF;
+    END $$
   `;
 
   // ── Seed entregadores 2026 v1 ──
