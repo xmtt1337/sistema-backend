@@ -283,7 +283,7 @@ app.get("/admin/pagamentos", verificarToken, verificarGestor, async (req, res) =
       lerPlanilha(planilha[0].spreadsheet_id),
       lerCadastroPix(),
       sql`SELECT nome, chave_pix, tipo_pix FROM trampay_entregadores`,
-      sql`SELECT usuario_nome, valor_antecipado FROM antecipacoes WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)} AND status = 'aprovada'`
+      sql`SELECT usuario_nome, valor_antecipado FROM antecipacoes WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)} AND status != 'rejeitada'`
     ]);
 
     // ── Planilha de fechamento ──
@@ -381,7 +381,7 @@ app.get("/admin/pagamentos/csv", verificarToken, verificarGestor, async (req, re
       lerPlanilha(planilha[0].spreadsheet_id),
       lerCadastroPix(),
       sql`SELECT nome, id_externo, chave_pix, tipo_pix FROM trampay_entregadores`,
-      sql`SELECT usuario_nome, valor_antecipado FROM antecipacoes WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)} AND status = 'aprovada'`
+      sql`SELECT usuario_nome, valor_antecipado FROM antecipacoes WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)} AND status != 'rejeitada'`
     ]);
 
     const antecipMapCsv = {};
@@ -509,7 +509,11 @@ app.get("/painel", verificarToken, async (req, res) => {
       return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
     }
 
-    const { resumo, extravios } = await lerPlanilha(planilha[0].spreadsheet_id);
+    const [{ resumo, extravios }, antRows] = await Promise.all([
+      lerPlanilha(planilha[0].spreadsheet_id),
+      sql`SELECT COALESCE(SUM(valor_antecipado), 0) AS total FROM antecipacoes WHERE usuario_id = ${req.user.id} AND mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)} AND status != 'rejeitada'`
+    ]);
+    const antecipado_num = Number(antRows[0]?.total || 0);
 
     const cabecalho = (resumo[1] || []).map(c =>
       String(c || "").trim().replace(/\n/g, " ").replace(/  +/g, " ")
@@ -578,12 +582,17 @@ app.get("/painel", verificarToken, async (req, res) => {
     const multas_valor      = num(get("MULTAS"));
     const extravios_valor   = num(get("EXTRAVIOS"));
     const total_receber_num = num(get("TOTAL A RECEBER"));
+    const liquido_num       = Math.max(0, total_receber_num - antecipado_num);
 
     res.json({
       nome:             nomeEntregador,
       periodo:          parsePeriodo(codigoPeriodo),
       total_receber:    moeda(total_receber_num),
       total_receber_num,
+      antecipado:       moeda(antecipado_num),
+      antecipado_num,
+      liquido:          moeda(liquido_num),
+      liquido_num,
       total_entregues:  inteiro(get("TOTAL ENTREGUES")),
       adicional:        moeda(num(get("ADICIONAL ------ ACERTO"))),
       deslocamento:     moeda(num(get("DESLOCAMENTO"))),
