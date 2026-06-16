@@ -56,6 +56,18 @@ const ORIGENS_PERMITIDAS = [
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
+
+// Worker OCR — inicializado em background ao subir o servidor
+let _ocrWorker = null;
+(async () => {
+  try {
+    const { createWorker } = require("tesseract.js");
+    _ocrWorker = await createWorker("por", 1, { logger: () => {} });
+    console.log("[OCR] Tesseract worker pronto.");
+  } catch (e) {
+    console.warn("[OCR] Falha ao inicializar Tesseract:", e.message);
+  }
+})();
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || ORIGENS_PERMITIDAS.includes(origin)) {
@@ -1404,10 +1416,49 @@ app.delete("/nota", verificarToken, async (req, res) => {
 
 app.post("/nota/extrair-pdf", verificarToken, express.raw({ type: "application/pdf", limit: "10mb" }), async (req, res) => {
   try {
+    // Etapa 1 — tenta extração nativa de texto
     const pdfParse = require("pdf-parse");
-    const data = await pdfParse(req.body);
-    res.json({ text: data.text || "" });
+    let text = "";
+    try {
+      const parsed = await pdfParse(req.body);
+      text = (parsed.text || "").trim();
+    } catch (_) {}
+
+    if (text.length > 20) return res.json({ text, source: "text" });
+
+    // Etapa 2 — PDF de imagem: renderiza páginas e faz OCR
+    if (!_ocrWorker) {
+      return res.status(503).json({ error: "OCR inicializando. Tente novamente em alguns segundos." });
+    }
+
+    const { createCanvas } = require("@napi-rs/canvas");
+    const pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
+
+    const canvasFactory = {
+      create(w, h) {
+        const c = createCanvas(Math.floor(w), Math.floor(h));
+        return { canvas: c, context: c.getContext("2d") };
+      },
+      reset(cc, w, h) { cc.canvas.width = Math.floor(w); cc.canvas.height = Math.floor(h); },
+      destroy(cc) { cc.canvas = null; cc.context = null; },
+    };
+
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(req.body), useSystemFonts: true }).promise;
+    let ocrText = "";
+
+    for (let p = 1; p <= Math.min(pdf.numPages, 3); p++) {
+      const page = await pdf.getPage(p);
+      const viewport = page.getViewport({ scale: 2.5 }); // escala alta = melhor OCR
+      const cc = canvasFactory.create(viewport.width, viewport.height);
+      await page.render({ canvasContext: cc.context, viewport, canvasFactory }).promise;
+      const imgBuf = cc.canvas.toBuffer("image/png");
+      const { data: { text: t } } = await _ocrWorker.recognize(imgBuf);
+      ocrText += t + "\n";
+    }
+
+    res.json({ text: ocrText, source: "ocr" });
   } catch (err) {
+    console.error("[extrair-pdf]", err.message);
     res.status(400).json({ error: "Não foi possível extrair texto do PDF.", detail: err.message });
   }
 });
