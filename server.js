@@ -263,6 +263,51 @@ async function lerCadastroPix() {
   return r.data.values || [];
 }
 
+app.get("/admin/pagamentos/quinzena", verificarToken, verificarGestor, async (req, res) => {
+  try {
+    const { mes, ano, quinzena } = req.query;
+    if (!mes || !ano || !quinzena) return res.status(400).json({ error: "Informe mes, ano e quinzena." });
+    const rows = await sql`
+      SELECT status, data_pagamento, pago_por FROM pagamentos_quinzena
+      WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+      LIMIT 1
+    `;
+    res.json(rows[0] || { status: "pendente", data_pagamento: null, pago_por: null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/admin/pagamentos/quinzena", verificarToken, verificarGestor, async (req, res) => {
+  try {
+    const { mes, ano, quinzena, status } = req.body;
+    if (!mes || !ano || !quinzena) return res.status(400).json({ error: "Informe mes, ano e quinzena." });
+    if (!["pendente", "pago"].includes(status)) return res.status(400).json({ error: "Status inválido." });
+    const pagoPor = req.user.name || req.user.username;
+    let rows;
+    if (status === "pago") {
+      rows = await sql`
+        INSERT INTO pagamentos_quinzena (mes, ano, quinzena, status, data_pagamento, pago_por)
+        VALUES (${parseInt(mes)}, ${parseInt(ano)}, ${parseInt(quinzena)}, 'pago', NOW(), ${pagoPor})
+        ON CONFLICT (mes, ano, quinzena) DO UPDATE
+          SET status = 'pago', data_pagamento = NOW(), pago_por = EXCLUDED.pago_por
+        RETURNING *
+      `;
+    } else {
+      rows = await sql`
+        INSERT INTO pagamentos_quinzena (mes, ano, quinzena, status)
+        VALUES (${parseInt(mes)}, ${parseInt(ano)}, ${parseInt(quinzena)}, 'pendente')
+        ON CONFLICT (mes, ano, quinzena) DO UPDATE
+          SET status = 'pendente', data_pagamento = NULL, pago_por = NULL
+        RETURNING *
+      `;
+    }
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/admin/pagamentos", verificarToken, verificarGestor, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
@@ -495,6 +540,24 @@ app.get("/admin/pagamentos/csv", verificarToken, verificarGestor, async (req, re
   }
 });
 
+app.patch("/admin/antecipacoes/quinzena/pagar", verificarToken, verificarGestor, async (req, res) => {
+  try {
+    const { mes, ano, quinzena } = req.body;
+    if (!mes || !ano || !quinzena) return res.status(400).json({ error: "Informe mes, ano e quinzena." });
+    const pagoPor = req.user.name || req.user.username;
+    const rows = await sql`
+      UPDATE antecipacoes
+      SET status = 'paga', data_aprovacao = NOW(), aprovado_por = ${pagoPor}
+      WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+        AND status != 'rejeitada'
+      RETURNING id
+    `;
+    res.json({ updated: rows.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/painel", verificarToken, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.query;
@@ -509,11 +572,14 @@ app.get("/painel", verificarToken, async (req, res) => {
       return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
     }
 
-    const [{ resumo, extravios }, antRows] = await Promise.all([
+    const [{ resumo, extravios }, antRows, pgtoRows] = await Promise.all([
       lerPlanilha(planilha[0].spreadsheet_id),
-      sql`SELECT COALESCE(SUM(valor_antecipado), 0) AS total FROM antecipacoes WHERE usuario_id = ${req.user.id} AND mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)} AND status != 'rejeitada'`
+      sql`SELECT COALESCE(SUM(valor_antecipado), 0) AS total FROM antecipacoes WHERE usuario_id = ${req.user.id} AND mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)} AND status != 'rejeitada'`,
+      sql`SELECT status, data_pagamento FROM pagamentos_quinzena WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)} LIMIT 1`
     ]);
-    const antecipado_num = Number(antRows[0]?.total || 0);
+    const antecipado_num   = Number(antRows[0]?.total || 0);
+    const pagamento_status = pgtoRows[0]?.status || "pendente";
+    const pagamento_data   = pgtoRows[0]?.data_pagamento || null;
 
     const cabecalho = (resumo[1] || []).map(c =>
       String(c || "").trim().replace(/\n/g, " ").replace(/  +/g, " ")
@@ -593,6 +659,8 @@ app.get("/painel", verificarToken, async (req, res) => {
       antecipado_num,
       liquido:          moeda(liquido_num),
       liquido_num,
+      pagamento_status,
+      pagamento_data,
       total_entregues:  inteiro(get("TOTAL ENTREGUES")),
       adicional:        moeda(num(get("ADICIONAL ------ ACERTO"))),
       deslocamento:     moeda(num(get("DESLOCAMENTO"))),
@@ -2171,6 +2239,19 @@ async function initDB() {
           UNIQUE (usuario_id, quinzena, mes, ano);
       END IF;
     END $$
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS pagamentos_quinzena (
+      id             SERIAL PRIMARY KEY,
+      mes            INTEGER NOT NULL,
+      ano            INTEGER NOT NULL,
+      quinzena       INTEGER NOT NULL,
+      status         TEXT    NOT NULL DEFAULT 'pendente',
+      data_pagamento TIMESTAMP,
+      pago_por       TEXT,
+      UNIQUE (mes, ano, quinzena)
+    )
   `;
 
   // ── Seed entregadores 2026 v1 ──
