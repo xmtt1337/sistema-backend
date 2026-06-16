@@ -576,7 +576,7 @@ app.get("/painel", verificarToken, async (req, res) => {
     const nomeEntregador = req.user.name || req.user.username;
 
     const planilha = await sql`
-      SELECT spreadsheet_id FROM planilhas_quinzena
+      SELECT spreadsheet_id, uploaded_at FROM planilhas_quinzena
       WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
       LIMIT 1
     `;
@@ -688,11 +688,12 @@ app.get("/painel", verificarToken, async (req, res) => {
       qtd_imile:        inteiro(get("QTD IMILE")),
       valor_anjun:      moeda(num(get("VALOR ANJUN"))),
       entregues_anjun:  inteiro(get("ENTREGUES NO PRAZO ANJUN")),
-      valor_shopee:     moeda(num(get("VALOR SHOPEE"))),
-      entregues_shopee: inteiro(get("PACOTES ENTREGUES SPX")),
-      extravios_linhas: extravioslst,
-      multas_linhas:    multaslst,
-      multas_tem_valor: multas_valor !== 0
+      valor_shopee:         moeda(num(get("VALOR SHOPEE"))),
+      entregues_shopee:     inteiro(get("PACOTES ENTREGUES SPX")),
+      extravios_linhas:     extravioslst,
+      multas_linhas:        multaslst,
+      multas_tem_valor:     multas_valor !== 0,
+      planilha_uploaded_at: planilha[0].uploaded_at || null
     });
 
   } catch (err) {
@@ -938,10 +939,10 @@ app.post("/admin/planilhas", verificarToken, verificarGestor, async (req, res) =
   const { mes, ano, quinzena, spreadsheet_url } = req.body;
   const spreadsheet_id = extrairSpreadsheetId(spreadsheet_url);
   await sql`
-    INSERT INTO planilhas_quinzena (mes, ano, quinzena, spreadsheet_id)
-    VALUES (${parseInt(mes)}, ${parseInt(ano)}, ${parseInt(quinzena)}, ${spreadsheet_id})
+    INSERT INTO planilhas_quinzena (mes, ano, quinzena, spreadsheet_id, uploaded_at)
+    VALUES (${parseInt(mes)}, ${parseInt(ano)}, ${parseInt(quinzena)}, ${spreadsheet_id}, NOW())
     ON CONFLICT (mes, ano, quinzena)
-    DO UPDATE SET spreadsheet_id = EXCLUDED.spreadsheet_id
+    DO UPDATE SET spreadsheet_id = EXCLUDED.spreadsheet_id, uploaded_at = NOW()
   `;
   res.json({ success: true });
 });
@@ -2087,9 +2088,36 @@ app.get("/bipagem/buscar", verificarToken, verificarNaoEntregador, async (req, r
 
 // ───── ANTECIPAÇÕES ─────
 
+function addBusinessDays(date, days) {
+  const result = new Date(date);
+  let added = 0;
+  while (added < days) {
+    result.setDate(result.getDate() + 1);
+    if (result.getDay() !== 0 && result.getDay() !== 6) added++;
+  }
+  return result;
+}
+
 app.post("/antecipacoes", verificarToken, async (req, res) => {
   try {
     const { quinzena, mes, ano, valor_nf, valor_antecipado, numero_nf, cnpj, telefone } = req.body;
+    const m = parseInt(mes), a = parseInt(ano), q = parseInt(quinzena);
+
+    // Bloqueia períodos anteriores à 2ª Quinzena de Maio/2026
+    if (a < 2026 || (a === 2026 && m < 5) || (a === 2026 && m === 5 && q < 2)) {
+      return res.status(403).json({ error: "Antecipação não disponível para períodos anteriores à 2ª Quinzena de Maio/2026." });
+    }
+
+    // Verifica se a planilha foi anexada e se passaram 5 dias úteis
+    const planilha = await sql`SELECT uploaded_at FROM planilhas_quinzena WHERE mes=${m} AND ano=${a} AND quinzena=${q} LIMIT 1`;
+    if (!planilha.length || !planilha[0].uploaded_at) {
+      return res.status(403).json({ error: "Planilha ainda não processada pelo administrador." });
+    }
+    const dataLiberacao = addBusinessDays(new Date(planilha[0].uploaded_at), 5);
+    if (new Date() < dataLiberacao) {
+      return res.status(403).json({ error: `Solicitação disponível apenas a partir de ${dataLiberacao.toLocaleDateString("pt-BR")}.` });
+    }
+
     const vAnt = parseFloat(valor_antecipado);
     const vNF  = valor_nf != null ? parseFloat(valor_nf) : null;
     if (!vAnt || vAnt <= 0) return res.status(400).json({ error: "Valor antecipado inválido." });
@@ -2101,7 +2129,7 @@ app.post("/antecipacoes", verificarToken, async (req, res) => {
         (usuario_id, usuario_nome, quinzena, mes, ano, valor_nf, valor_antecipado, numero_nf, cnpj, telefone)
       VALUES
         (${req.user.id}, ${req.user.name || req.user.username},
-         ${parseInt(quinzena)}, ${parseInt(mes)}, ${parseInt(ano)},
+         ${q}, ${m}, ${a},
          ${vNF}, ${vAnt}, ${numero_nf || null}, ${cnpjLimpo || null}, ${telefone || null})
     `;
     res.json({ success: true });
@@ -2198,6 +2226,7 @@ async function initDB() {
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS nivel INT DEFAULT 1`;
   await sql`ALTER TABLE planilhas_quinzena ADD COLUMN IF NOT EXISTS ignora_nf BOOLEAN DEFAULT false`;
+  await sql`ALTER TABLE planilhas_quinzena ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMP`;
   await sql`
     UPDATE planilhas_quinzena SET ignora_nf = true
     WHERE spreadsheet_id IN (
