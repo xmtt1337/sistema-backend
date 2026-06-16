@@ -1402,6 +1402,16 @@ app.delete("/nota", verificarToken, async (req, res) => {
   }
 });
 
+app.post("/nota/extrair-pdf", verificarToken, express.raw({ type: "application/pdf", limit: "10mb" }), async (req, res) => {
+  try {
+    const pdfParse = require("pdf-parse");
+    const data = await pdfParse(req.body);
+    res.json({ text: data.text || "" });
+  } catch (err) {
+    res.status(400).json({ error: "Não foi possível extrair texto do PDF.", detail: err.message });
+  }
+});
+
 function verificarNaoEntregador(req, res, next) {
   if (req.user.role === 'entregador') return res.status(403).json({ error: 'Acesso negado' });
   next();
