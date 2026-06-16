@@ -1422,17 +1422,25 @@ app.post("/nota/extrair-pdf", verificarToken, express.raw({ type: "application/p
     try {
       const parsed = await pdfParse(req.body);
       text = (parsed.text || "").trim();
-    } catch (_) {}
+      console.log(`[pdf] pdf-parse: ${text.length} chars`);
+    } catch (e) {
+      console.warn("[pdf] pdf-parse falhou:", e.message);
+    }
 
     if (text.length > 20) return res.json({ text, source: "text" });
 
     // Etapa 2 — PDF de imagem: renderiza páginas e faz OCR
     if (!_ocrWorker) {
+      console.warn("[pdf] OCR worker ainda não pronto");
       return res.status(503).json({ error: "OCR inicializando. Tente novamente em alguns segundos." });
     }
 
     const { createCanvas } = require("@napi-rs/canvas");
     const pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
+    pdfjsLib.GlobalWorkerOptions.workerSrc = ""; // desativa web worker (Node.js não suporta)
+
+    const pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(req.body), useSystemFonts: true }).promise;
+    console.log(`[pdf] ${pdfDoc.numPages} página(s) — iniciando OCR`);
 
     const canvasFactory = {
       create(w, h) {
@@ -1443,22 +1451,22 @@ app.post("/nota/extrair-pdf", verificarToken, express.raw({ type: "application/p
       destroy(cc) { cc.canvas = null; cc.context = null; },
     };
 
-    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(req.body), useSystemFonts: true }).promise;
     let ocrText = "";
-
-    for (let p = 1; p <= Math.min(pdf.numPages, 3); p++) {
-      const page = await pdf.getPage(p);
-      const viewport = page.getViewport({ scale: 2.5 }); // escala alta = melhor OCR
+    for (let p = 1; p <= Math.min(pdfDoc.numPages, 3); p++) {
+      const page = await pdfDoc.getPage(p);
+      const viewport = page.getViewport({ scale: 2.5 });
       const cc = canvasFactory.create(viewport.width, viewport.height);
       await page.render({ canvasContext: cc.context, viewport, canvasFactory }).promise;
       const imgBuf = cc.canvas.toBuffer("image/png");
+      console.log(`[pdf] página ${p} renderizada, tamanho imagem: ${imgBuf.length} bytes`);
       const { data: { text: t } } = await _ocrWorker.recognize(imgBuf);
+      console.log(`[pdf] OCR página ${p}: ${t.trim().length} chars`);
       ocrText += t + "\n";
     }
 
     res.json({ text: ocrText, source: "ocr" });
   } catch (err) {
-    console.error("[extrair-pdf]", err.message);
+    console.error("[pdf] ERRO:", err.message, "\n", err.stack);
     res.status(400).json({ error: "Não foi possível extrair texto do PDF.", detail: err.message });
   }
 });
