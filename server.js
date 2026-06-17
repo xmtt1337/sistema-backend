@@ -584,12 +584,16 @@ app.get("/painel", verificarToken, async (req, res) => {
       return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
     }
 
-    const [{ resumo, extravios }, antRows, pgtoRows] = await Promise.all([
+    const [{ resumo, extravios }, antRows, antInfoRows, pgtoRows] = await Promise.all([
       lerPlanilha(planilha[0].spreadsheet_id),
-      sql`SELECT COALESCE(SUM(valor_antecipado), 0) AS total FROM antecipacoes WHERE usuario_id = ${req.user.id} AND mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)} AND status != 'rejeitada'`,
+      // Só desconta antecipações efetivamente pagas
+      sql`SELECT COALESCE(SUM(valor_antecipado), 0) AS total FROM antecipacoes WHERE usuario_id = ${req.user.id} AND mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)} AND status = 'paga'`,
+      // Info da antecipação mais recente (para exibir status no painel)
+      sql`SELECT status, valor_antecipado, data_aprovacao FROM antecipacoes WHERE usuario_id = ${req.user.id} AND mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)} AND status != 'rejeitada' ORDER BY id DESC LIMIT 1`,
       sql`SELECT status, data_pagamento FROM pagamentos_quinzena WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)} LIMIT 1`
     ]);
     const antecipado_num   = Number(antRows[0]?.total || 0);
+    const antecipacao_info = antInfoRows[0] || null;
     const pagamento_status = pgtoRows[0]?.status || "pendente";
     const pagamento_data   = pgtoRows[0]?.data_pagamento || null;
 
@@ -693,7 +697,8 @@ app.get("/painel", verificarToken, async (req, res) => {
       extravios_linhas:     extravioslst,
       multas_linhas:        multaslst,
       multas_tem_valor:     multas_valor !== 0,
-      planilha_uploaded_at: planilha[0].uploaded_at || null
+      planilha_uploaded_at: planilha[0].uploaded_at || null,
+      antecipacao_info
     });
 
   } catch (err) {
@@ -2143,6 +2148,25 @@ app.get("/antecipacoes", verificarToken, async (req, res) => {
       ORDER BY ano DESC, mes DESC, quinzena DESC
     `;
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/admin/antecipacoes/bulk/pagar", verificarToken, verificarGestor, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: "Informe os IDs." });
+    const pagoPor  = req.user.name || req.user.username;
+    const intIds   = ids.map(id => parseInt(id));
+    const rows     = await sql`
+      UPDATE antecipacoes
+      SET status = 'paga', data_aprovacao = NOW(), aprovado_por = ${pagoPor}
+      WHERE id = ANY(${intIds})
+        AND status != 'rejeitada'
+      RETURNING id
+    `;
+    res.json({ updated: rows.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
