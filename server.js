@@ -2108,14 +2108,10 @@ app.post("/antecipacoes", verificarToken, async (req, res) => {
       return res.status(403).json({ error: "Antecipação não disponível para períodos anteriores à 2ª Quinzena de Maio/2026." });
     }
 
-    // Verifica se a planilha foi anexada e se passaram 5 dias úteis
+    // Verifica se a planilha foi anexada pelo administrador
     const planilha = await sql`SELECT uploaded_at FROM planilhas_quinzena WHERE mes=${m} AND ano=${a} AND quinzena=${q} LIMIT 1`;
     if (!planilha.length || !planilha[0].uploaded_at) {
       return res.status(403).json({ error: "Planilha ainda não processada pelo administrador." });
-    }
-    const dataLiberacao = addBusinessDays(new Date(planilha[0].uploaded_at), 5);
-    if (new Date() < dataLiberacao) {
-      return res.status(403).json({ error: `Solicitação disponível apenas a partir de ${dataLiberacao.toLocaleDateString("pt-BR")}.` });
     }
 
     const vAnt = parseFloat(valor_antecipado);
