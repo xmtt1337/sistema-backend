@@ -110,6 +110,11 @@ function verificarGestorOuUser(req, res, next) {
   next();
 }
 
+function verificarVideira(req, res, next) {
+  if (!["ADM Videira", "admin", "dev"].includes(req.user.role)) return res.status(403).json({ error: "Acesso negado" });
+  next();
+}
+
 // ── Sistema de Níveis (Nv 1-100) ───────────────────────────────────────────
 // Para subir do nível N: precisa de 100*N bips únicos
 // Acumulado mínimo para chegar ao nível N: 50*N*(N-1)
@@ -263,6 +268,14 @@ async function lerPlanilha(spreadsheetId) {
     sheets.spreadsheets.values.get({ spreadsheetId, range: "Extravios!A:Z" })
   ]);
   return { resumo: r1.data.values || [], extravios: r2.data.values || [] };
+}
+
+async function lerPlanilhaVideira(spreadsheetId) {
+  const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+  const auth = new google.auth.GoogleAuth({ credentials: creds, scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"] });
+  const sheets = google.sheets({ version: "v4", auth });
+  const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: "Resumo!A:T" });
+  return r.data.values || [];
 }
 
 const CADASTRO_PIX_ID = "1Udt_neQUNYHWFmndFHU7evg5fG62Ueh82aWUG8-l8xI";
@@ -956,6 +969,151 @@ app.delete("/admin/planilhas/:id", verificarToken, verificarGestor, async (req, 
   await sql`DELETE FROM planilhas_quinzena WHERE id = ${req.params.id}`;
   res.json({ success: true });
 });
+
+// ── VIDEIRA ────────────────────────────────────────────────────────────────
+
+app.get("/videira/planilhas", verificarToken, verificarVideira, async (req, res) => {
+  try {
+    const rows = await sql`SELECT * FROM planilhas_videira ORDER BY ano DESC, mes DESC, quinzena DESC`;
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post("/videira/planilha", verificarToken, verificarVideira, async (req, res) => {
+  try {
+    const { mes, ano, quinzena, spreadsheet_url } = req.body;
+    if (!mes || !ano || !quinzena || !spreadsheet_url) return res.status(400).json({ error: "Preencha todos os campos." });
+    const spreadsheet_id = extrairSpreadsheetId(spreadsheet_url);
+    await sql`
+      INSERT INTO planilhas_videira (mes, ano, quinzena, spreadsheet_id, uploaded_at)
+      VALUES (${parseInt(mes)}, ${parseInt(ano)}, ${parseInt(quinzena)}, ${spreadsheet_id}, NOW())
+      ON CONFLICT (mes, ano, quinzena)
+      DO UPDATE SET spreadsheet_id = EXCLUDED.spreadsheet_id, uploaded_at = NOW()
+    `;
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete("/videira/planilhas/:id", verificarToken, verificarVideira, async (req, res) => {
+  try {
+    await sql`DELETE FROM planilhas_videira WHERE id = ${req.params.id}`;
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get("/videira/painel", verificarToken, verificarVideira, async (req, res) => {
+  try {
+    const { mes, ano, quinzena } = req.query;
+    const planilha = await sql`
+      SELECT spreadsheet_id FROM planilhas_videira
+      WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+      LIMIT 1
+    `;
+    if (!planilha.length) return res.status(404).json({ error: "Nenhum fechamento cadastrado para este período." });
+
+    const rows = await lerPlanilhaVideira(planilha[0].spreadsheet_id);
+    if (rows.length < 2) return res.status(500).json({ error: "Planilha vazia ou formato inválido." });
+
+    const hdr = (rows[0] || []).map(c => String(c || "").trim().toLowerCase());
+    const getIdx = (terms) => hdr.findIndex(h => terms.some(t => h.includes(t)));
+
+    const cidadeIdx = getIdx(["cidade"]);
+    const shopeeIdx = getIdx(["shopee"]);
+    const imileIdx  = getIdx(["imile"]);
+    const anjunIdx  = getIdx(["anjun"]);
+    const jtIdx     = getIdx(["j&t", "jt express", "jt"]);
+    const loggiIdx  = getIdx(["loggi"]);
+    const qtdCidIdx = getIdx(["qtd por cidade"]);
+    const valCidIdx = getIdx(["valores por cidade", "valor por cidade"]);
+    const qtdColIdx = getIdx(["quantidade coletas"]);
+    const valColIdx = getIdx(["valores coletas", "valor coletas"]);
+    const diaColIdx = getIdx(["diária coletas", "diaria coletas", "diária", "diaria"]);
+    const valDesIdx = getIdx(["valor de desconto"]);
+    const qtdTotIdx = getIdx(["quantidade de pacote"]);
+    const valLiqIdx = getIdx(["valor total líquido", "valor total liquido", "valor total"]);
+
+    const getCell = (row, idx) => idx >= 0 ? String(row[idx] || "") : "";
+
+    // Campos globais vêm da primeira linha de dados
+    const firstRow = rows[1] || [];
+    const quinzenaRef = String(firstRow[0] || "").trim();
+
+    const cidades = [];
+    let totaisQtd = null;
+    let totaisVal = null;
+
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      const cidade = cidadeIdx >= 0 ? String(row[cidadeIdx] || "").trim() : "";
+      if (!cidade) continue;
+
+      const cidadeLower = cidade.toLowerCase();
+      if (cidadeLower === "totais") {
+        totaisQtd = {
+          shopee: Math.round(num(getCell(row, shopeeIdx))),
+          imile:  Math.round(num(getCell(row, imileIdx))),
+          anjun:  Math.round(num(getCell(row, anjunIdx))),
+          jt:     Math.round(num(getCell(row, jtIdx))),
+          loggi:  Math.round(num(getCell(row, loggiIdx))),
+          total:  Math.round(num(getCell(row, qtdCidIdx))),
+        };
+        continue;
+      }
+      if (cidadeLower === "valores") {
+        totaisVal = {
+          shopee: moeda(num(getCell(row, shopeeIdx))),
+          imile:  moeda(num(getCell(row, imileIdx))),
+          anjun:  moeda(num(getCell(row, anjunIdx))),
+          jt:     moeda(num(getCell(row, jtIdx))),
+          loggi:  moeda(num(getCell(row, loggiIdx))),
+        };
+        continue;
+      }
+
+      const shopeeQ = Math.round(num(getCell(row, shopeeIdx)));
+      const imileQ  = Math.round(num(getCell(row, imileIdx)));
+      const anjunQ  = Math.round(num(getCell(row, anjunIdx)));
+      const jtQ     = Math.round(num(getCell(row, jtIdx)));
+      const loggiQ  = Math.round(num(getCell(row, loggiIdx)));
+      const qtdTotalRaw = num(getCell(row, qtdCidIdx));
+      const qtdTotal = qtdTotalRaw > 0 ? Math.round(qtdTotalRaw) : (shopeeQ + imileQ + anjunQ + jtQ + loggiQ);
+      const valCid = num(getCell(row, valCidIdx));
+
+      cidades.push({
+        cidade,
+        shopee:          shopeeQ,
+        imile:           imileQ,
+        anjun:           anjunQ,
+        jt:              jtQ,
+        loggi:           loggiQ,
+        qtd_total:       qtdTotal,
+        valor_cidade:    moeda(valCid),
+        valor_cidade_num: valCid,
+      });
+    }
+
+    const valLiqNum = num(getCell(firstRow, valLiqIdx));
+
+    res.json({
+      quinzena_ref:            quinzenaRef,
+      periodo:                 parsePeriodo(quinzenaRef),
+      cidades,
+      totais_qtd:              totaisQtd,
+      totais_val:              totaisVal,
+      qtd_coletas:             inteiro(getCell(firstRow, qtdColIdx)),
+      valor_coletas:           moeda(num(getCell(firstRow, valColIdx))),
+      diaria_coletas:          moeda(num(getCell(firstRow, diaColIdx))),
+      valor_desconto:          moeda(num(getCell(firstRow, valDesIdx))),
+      qtd_pacotes_total:       inteiro(getCell(firstRow, qtdTotIdx)),
+      valor_total_liquido:     moeda(valLiqNum),
+      valor_total_liquido_num: valLiqNum,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── /VIDEIRA ───────────────────────────────────────────────────────────────
 
 app.get("/admin/historico", verificarToken, verificarGestor, async (req, res) => {
   try {
@@ -2368,6 +2526,17 @@ async function initDB() {
       status         TEXT    NOT NULL DEFAULT 'pendente',
       data_pagamento TIMESTAMP,
       pago_por       TEXT,
+      UNIQUE (mes, ano, quinzena)
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS planilhas_videira (
+      id             SERIAL PRIMARY KEY,
+      mes            INTEGER NOT NULL,
+      ano            INTEGER NOT NULL,
+      quinzena       INTEGER NOT NULL,
+      spreadsheet_id TEXT    NOT NULL,
+      uploaded_at    TIMESTAMP,
       UNIQUE (mes, ano, quinzena)
     )
   `;
