@@ -1052,13 +1052,15 @@ app.get("/videira/painel", verificarToken, verificarVideira, async (req, res) =>
 
       const cidadeLower = cidade.toLowerCase();
       if (cidadeLower === "totais") {
+        const sT = Math.round(num(getCell(row, shopeeIdx)));
+        const iT = Math.round(num(getCell(row, imileIdx)));
+        const aT = Math.round(num(getCell(row, anjunIdx)));
+        const jT = Math.round(num(getCell(row, jtIdx)));
+        const lT = Math.round(num(getCell(row, loggiIdx)));
+        const rawTot = Math.round(num(getCell(row, qtdCidIdx)));
         totaisQtd = {
-          shopee: Math.round(num(getCell(row, shopeeIdx))),
-          imile:  Math.round(num(getCell(row, imileIdx))),
-          anjun:  Math.round(num(getCell(row, anjunIdx))),
-          jt:     Math.round(num(getCell(row, jtIdx))),
-          loggi:  Math.round(num(getCell(row, loggiIdx))),
-          total:  Math.round(num(getCell(row, qtdCidIdx))),
+          shopee: sT, imile: iT, anjun: aT, jt: jT, loggi: lT,
+          total: rawTot > 0 ? rawTot : sT + iT + aT + jT + lT,
         };
         continue;
       }
@@ -1147,6 +1149,7 @@ app.get("/videira/painel", verificarToken, verificarVideira, async (req, res) =>
       qtd_pacotes_total:       inteiro(getCell(firstRow, qtdTotIdx)),
       valor_total_liquido:     moeda(valLiqNum),
       valor_total_liquido_num: valLiqNum,
+      soma_valor_cidades:      moeda(cidades.reduce((a, c) => a + (c.valor_cidade_num || 0), 0)),
       extravios_linhas:        extravioslst,
     });
   } catch (err) {
