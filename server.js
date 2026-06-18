@@ -274,8 +274,11 @@ async function lerPlanilhaVideira(spreadsheetId) {
   const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS);
   const auth = new google.auth.GoogleAuth({ credentials: creds, scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"] });
   const sheets = google.sheets({ version: "v4", auth });
-  const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: "Resumo!A:T" });
-  return r.data.values || [];
+  const [r1, r2] = await Promise.all([
+    sheets.spreadsheets.values.get({ spreadsheetId, range: "Resumo!A:T" }),
+    sheets.spreadsheets.values.get({ spreadsheetId, range: "Extravios!A:Z" }).catch(() => ({ data: { values: [] } })),
+  ]);
+  return { resumo: r1.data.values || [], extravios: r2.data.values || [] };
 }
 
 const CADASTRO_PIX_ID = "1Udt_neQUNYHWFmndFHU7evg5fG62Ueh82aWUG8-l8xI";
@@ -1011,7 +1014,7 @@ app.get("/videira/painel", verificarToken, verificarVideira, async (req, res) =>
     `;
     if (!planilha.length) return res.status(404).json({ error: "Nenhum fechamento cadastrado para este período." });
 
-    const rows = await lerPlanilhaVideira(planilha[0].spreadsheet_id);
+    const { resumo: rows, extravios } = await lerPlanilhaVideira(planilha[0].spreadsheet_id);
     if (rows.length < 2) return res.status(500).json({ error: "Planilha vazia ou formato inválido." });
 
     const hdr = (rows[0] || []).map(c => String(c || "").trim().toLowerCase());
@@ -1094,6 +1097,43 @@ app.get("/videira/painel", verificarToken, verificarVideira, async (req, res) =>
 
     const valLiqNum = num(getCell(firstRow, valLiqIdx));
 
+    // ── Processar aba Extravios ──
+    const extCab      = (extravios[0] || []).map(c => String(c || "").trim());
+    const extLinhas   = extravios.slice(1);
+    const extCabLower = extCab.map(c => c.toLowerCase());
+    const findExtCol  = (...cands) => {
+      for (const c of cands) {
+        const i = extCabLower.indexOf(c.toLowerCase());
+        if (i >= 0) return i;
+      }
+      return -1;
+    };
+    const extTranspIdx = findExtCol("TRANSPORTADORA", "Transportadora");
+    const extCodIdx    = findExtCol("CÓDIGO", "Código", "CODIGO");
+    const extEndIdx    = findExtCol("Endereço", "ENDEREÇO", "Endereco");
+    const extStatusIdx = findExtCol("STATUS", "Status");
+    const extRespIdx   = findExtCol("Responsavel", "RESPONSAVEL", "Responsável");
+    const extValorCands = ["VALOR", "VLR", "VALOR DO PRODUTO", "VALOR PRODUTO"];
+    const extValorIdx   = extValorCands.reduce((f, c) => f >= 0 ? f : findExtCol(c), -1);
+
+    const extravioslst = [];
+    extLinhas.forEach(row => {
+      const transp = String(row[extTranspIdx] || "").trim();
+      if (!transp) return;
+      const status   = String(row[extStatusIdx] || "").trim().toLowerCase();
+      if (status === "multa") return;
+      const valorNum = num(extValorIdx >= 0 ? String(row[extValorIdx] || "") : "");
+      extravioslst.push({
+        transportadora: transp || "—",
+        codigo:         String(row[extCodIdx] || "—").trim(),
+        endereco:       String(row[extEndIdx] || "—").trim(),
+        responsavel:    String(row[extRespIdx] || "—").trim(),
+        status:         String(row[extStatusIdx] || "").trim(),
+        valor:          valorNum ? moeda(valorNum) : "R$ 0,00",
+        tem_valor:      valorNum !== 0,
+      });
+    });
+
     res.json({
       quinzena_ref:            quinzenaRef,
       periodo:                 parsePeriodo(quinzenaRef),
@@ -1107,6 +1147,7 @@ app.get("/videira/painel", verificarToken, verificarVideira, async (req, res) =>
       qtd_pacotes_total:       inteiro(getCell(firstRow, qtdTotIdx)),
       valor_total_liquido:     moeda(valLiqNum),
       valor_total_liquido_num: valLiqNum,
+      extravios_linhas:        extravioslst,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
