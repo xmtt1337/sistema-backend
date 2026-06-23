@@ -576,12 +576,12 @@ app.get("/admin/antecipacoes/csv", verificarToken, verificarGestor, async (req, 
     const [antecRows, cadastroRows, trampayRows] = await Promise.all([
       sql`SELECT usuario_nome, valor_antecipado, data_aprovacao
           FROM antecipacoes
-          WHERE mes = ${mesN} AND ano = ${anoN} AND quinzena = ${qN} AND status = 'paga'`,
+          WHERE mes = ${mesN} AND ano = ${anoN} AND quinzena = ${qN} AND status != 'rejeitada'`,
       lerCadastroPix(),
       sql`SELECT nome, id_externo FROM trampay_entregadores`,
     ]);
 
-    if (!antecRows.length) return res.status(404).json({ error: "Nenhuma antecipação paga encontrada para este período." });
+    if (!antecRows.length) return res.status(404).json({ error: "Nenhuma antecipação encontrada para este período." });
 
     // cadMap: sistema name → { documento, nomeReal }
     let cabC = [], linhasC = [];
