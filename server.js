@@ -568,6 +568,103 @@ app.get("/admin/pagamentos/csv", verificarToken, verificarGestor, async (req, re
   }
 });
 
+app.get("/admin/antecipacoes/csv", verificarToken, verificarGestor, async (req, res) => {
+  try {
+    const { mes, ano, quinzena } = req.query;
+    const mesN = parseInt(mes); const anoN = parseInt(ano); const qN = parseInt(quinzena);
+
+    const [antecRows, cadastroRows, trampayRows] = await Promise.all([
+      sql`SELECT usuario_nome, valor_antecipado, data_aprovacao
+          FROM antecipacoes
+          WHERE mes = ${mesN} AND ano = ${anoN} AND quinzena = ${qN} AND status = 'paga'`,
+      lerCadastroPix(),
+      sql`SELECT nome, id_externo FROM trampay_entregadores`,
+    ]);
+
+    if (!antecRows.length) return res.status(404).json({ error: "Nenhuma antecipação paga encontrada para este período." });
+
+    // cadMap: sistema name → { documento, nomeReal }
+    let cabC = [], linhasC = [];
+    for (let i = 0; i < Math.min(5, cadastroRows.length); i++) {
+      if (cadastroRows[i]?.some(c => c && String(c).trim())) {
+        cabC    = cadastroRows[i].map(c => String(c || "").trim().toUpperCase());
+        linhasC = cadastroRows.slice(i + 1);
+        break;
+      }
+    }
+    const findCol2    = (keys) => cabC.findIndex(c => keys.some(k => c.includes(k)));
+    const usuarioIdx2 = findCol2(["USUARIO","USUARIOS"]);
+    const nomeRealIdx2= findCol2(["NOME"]);
+    const docIdx2     = findCol2(["DOCUMENTO","CPF","CNPJ","DOC"]);
+    const cadMap2 = {};
+    linhasC.forEach(l => {
+      const u = usuarioIdx2 >= 0 ? String(l[usuarioIdx2] || "").trim() : "";
+      if (!u) return;
+      cadMap2[normNome(u)] = {
+        documento: docIdx2      >= 0 ? String(l[docIdx2]      || "").trim() : "",
+        nomeReal:  nomeRealIdx2 >= 0 ? String(l[nomeRealIdx2] || "").trim() : "",
+      };
+    });
+
+    function normB(s) {
+      return String(s || "").trim().normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ");
+    }
+    const trampayMap2 = {};
+    trampayRows.forEach(t => { trampayMap2[normB(t.nome)] = { id_externo: t.id_externo || "" }; });
+
+    const MESES_UP = ["JANEIRO","FEVEREIRO","MARÇO","ABRIL","MAIO","JUNHO","JULHO","AGOSTO","SETEMBRO","OUTUBRO","NOVEMBRO","DEZEMBRO"];
+    const nomeMes  = MESES_UP[mesN - 1] || "";
+    const mesStr   = String(mesN).padStart(2, "0");
+    const dataPeriodo = qN === 1 ? `01/${mesStr}/${anoN}` : `16/${mesStr}/${anoN}`;
+    const hoje        = new Date();
+    const dataRepasse = `${String(hoje.getDate()).padStart(2,"0")}/${String(hoje.getMonth()+1).padStart(2,"0")}/${hoje.getFullYear()}`;
+    const descricao   = `Antecipação período Q${qN} / ${nomeMes}`;
+
+    const rows = antecRows.map(a => {
+      const cad     = cadMap2[normNome(a.usuario_nome)] || {};
+      const trampay = trampayMap2[normB(cad.nomeReal || a.usuario_nome)] || {};
+      const dataLanc = a.data_aprovacao
+        ? new Date(a.data_aprovacao).toLocaleDateString("pt-BR")
+        : dataRepasse;
+      return {
+        praca:                          "MeioOeste - SC",
+        recebedor:                      cad.nomeReal || a.usuario_nome,
+        valor:                          Number(a.valor_antecipado).toFixed(2).replace(".", ","),
+        data_do_lancamento_financeiro:  dataLanc,
+        data_do_periodo_de_referencia:  dataPeriodo,
+        data_do_repasse:                dataRepasse,
+        id_da_pessoa_entregadora:       trampay.id_externo || "",
+        descricao,
+        documento:                      cad.documento || "",
+      };
+    });
+
+    const txt  = v => `"${String(v).replace(/"/g, '""')}"`;
+    const num_ = v => v ? `="${String(v).replace(/"/g, '""')}"` : `""`;
+    const header = ["praca","recebedor","valor","data_do_lancamento_financeiro","data_do_periodo_de_referencia","data_do_repasse","id_da_pessoa_entregadora","descricao","documento"];
+    const csvLines = [
+      header.join(";"),
+      ...rows.map(r => [
+        txt(r.praca),
+        txt(r.recebedor),
+        txt(r.valor),
+        txt(r.data_do_lancamento_financeiro),
+        txt(r.data_do_periodo_de_referencia),
+        txt(r.data_do_repasse),
+        num_(r.id_da_pessoa_entregadora),
+        txt(r.descricao),
+        num_(r.documento),
+      ].join(";"))
+    ];
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="antecipacoes_trampay_${mes}_${ano}_q${quinzena}.csv"`);
+    res.send("﻿" + csvLines.join("\r\n"));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.patch("/admin/antecipacoes/quinzena/pagar", verificarToken, verificarGestor, async (req, res) => {
   try {
     const { mes, ano, quinzena } = req.body;
