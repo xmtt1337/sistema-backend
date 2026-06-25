@@ -342,6 +342,7 @@ app.get("/admin/pagamentos", verificarToken, verificarGestor, async (req, res) =
     const planilha = await sql`
       SELECT spreadsheet_id FROM planilhas_quinzena
       WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+        AND ativo IS NOT FALSE
       LIMIT 1
     `;
     if (!planilha.length) return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
@@ -446,6 +447,7 @@ app.get("/admin/pagamentos/csv", verificarToken, verificarGestor, async (req, re
     const planilha = await sql`
       SELECT spreadsheet_id FROM planilhas_quinzena
       WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+        AND ativo IS NOT FALSE
       LIMIT 1
     `;
     if (!planilha.length) return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
@@ -691,6 +693,7 @@ app.get("/painel", verificarToken, async (req, res) => {
     const planilha = await sql`
       SELECT spreadsheet_id, uploaded_at FROM planilhas_quinzena
       WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+        AND ativo IS NOT FALSE
       LIMIT 1
     `;
     if (!planilha.length) {
@@ -827,6 +830,7 @@ app.get("/admin/entregadores", verificarToken, verificarGestor, async (req, res)
     const planilha = await sql`
       SELECT spreadsheet_id FROM planilhas_quinzena
       WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+        AND ativo IS NOT FALSE
       LIMIT 1
     `;
     if (!planilha.length) {
@@ -894,6 +898,7 @@ app.get("/admin/painel", verificarToken, verificarGestor, async (req, res) => {
     const planilha = await sql`
       SELECT spreadsheet_id FROM planilhas_quinzena
       WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+        AND ativo IS NOT FALSE
       LIMIT 1
     `;
     if (!planilha.length) {
@@ -1010,6 +1015,7 @@ app.get("/admin/resumo-quinzena", verificarToken, verificarGestor, async (req, r
     const planilha = await sql`
       SELECT spreadsheet_id FROM planilhas_quinzena
       WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+        AND ativo IS NOT FALSE
       LIMIT 1
     `;
     if (!planilha.length) {
@@ -1068,6 +1074,14 @@ app.post("/admin/planilhas", verificarToken, verificarGestor, async (req, res) =
 app.delete("/admin/planilhas/:id", verificarToken, verificarGestor, async (req, res) => {
   await sql`DELETE FROM planilhas_quinzena WHERE id = ${req.params.id}`;
   res.json({ success: true });
+});
+
+app.patch("/admin/planilhas/:id/toggle", verificarToken, verificarGestor, async (req, res) => {
+  const row = await sql`SELECT ativo FROM planilhas_quinzena WHERE id = ${req.params.id}`;
+  if (!row.length) return res.status(404).json({ error: "Não encontrado." });
+  const novoAtivo = row[0].ativo === false ? true : false;
+  await sql`UPDATE planilhas_quinzena SET ativo = ${novoAtivo} WHERE id = ${req.params.id}`;
+  res.json({ ativo: novoAtivo });
 });
 
 // ── VIDEIRA ────────────────────────────────────────────────────────────────
@@ -1262,7 +1276,7 @@ app.get("/admin/historico", verificarToken, verificarGestor, async (req, res) =>
     const planilhas = await sql`
       SELECT mes, quinzena, spreadsheet_id
       FROM planilhas_quinzena
-      WHERE ano = ${parseInt(ano)}
+      WHERE ano = ${parseInt(ano)} AND ativo IS NOT FALSE
       ORDER BY mes ASC, quinzena ASC
     `;
     if (!planilhas.length) return res.json([]);
@@ -1304,7 +1318,7 @@ app.get("/historico", verificarToken, async (req, res) => {
     const planilhas = await sql`
       SELECT mes, quinzena, spreadsheet_id, ignora_nf
       FROM planilhas_quinzena
-      WHERE ano = ${parseInt(ano)}
+      WHERE ano = ${parseInt(ano)} AND ativo IS NOT FALSE
       ORDER BY mes ASC, quinzena ASC
     `;
     if (!planilhas.length) return res.json([]);
@@ -1355,6 +1369,7 @@ app.get("/admin/conferencia", verificarToken, verificarGestor, async (req, res) 
     const planilha = await sql`
       SELECT spreadsheet_id FROM planilhas_quinzena
       WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
+        AND ativo IS NOT FALSE
       LIMIT 1
     `;
     if (!planilha.length) return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
@@ -2413,7 +2428,7 @@ app.post("/antecipacoes", verificarToken, async (req, res) => {
     }
 
     // Verifica se a planilha foi anexada pelo administrador
-    const planilha = await sql`SELECT uploaded_at FROM planilhas_quinzena WHERE mes=${m} AND ano=${a} AND quinzena=${q} LIMIT 1`;
+    const planilha = await sql`SELECT uploaded_at FROM planilhas_quinzena WHERE mes=${m} AND ano=${a} AND quinzena=${q} AND ativo IS NOT FALSE LIMIT 1`;
     if (!planilha.length || !planilha[0].uploaded_at) {
       return res.status(403).json({ error: "Planilha ainda não processada pelo administrador." });
     }
@@ -2546,6 +2561,8 @@ async function initDB() {
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS nivel INT DEFAULT 1`;
   await sql`ALTER TABLE planilhas_quinzena ADD COLUMN IF NOT EXISTS ignora_nf BOOLEAN DEFAULT false`;
   await sql`ALTER TABLE planilhas_quinzena ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMP`;
+  await sql`ALTER TABLE planilhas_quinzena ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true`;
+  await sql`UPDATE planilhas_quinzena SET ativo = true WHERE ativo IS NULL`;
   await sql`
     UPDATE planilhas_quinzena SET ignora_nf = true
     WHERE spreadsheet_id IN (
