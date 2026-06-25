@@ -1063,10 +1063,10 @@ app.post("/admin/planilhas", verificarToken, verificarGestor, async (req, res) =
   const { mes, ano, quinzena, spreadsheet_url } = req.body;
   const spreadsheet_id = extrairSpreadsheetId(spreadsheet_url);
   await sql`
-    INSERT INTO planilhas_quinzena (mes, ano, quinzena, spreadsheet_id, uploaded_at)
-    VALUES (${parseInt(mes)}, ${parseInt(ano)}, ${parseInt(quinzena)}, ${spreadsheet_id}, NOW())
+    INSERT INTO planilhas_quinzena (mes, ano, quinzena, spreadsheet_id, uploaded_at, ativo)
+    VALUES (${parseInt(mes)}, ${parseInt(ano)}, ${parseInt(quinzena)}, ${spreadsheet_id}, NOW(), false)
     ON CONFLICT (mes, ano, quinzena)
-    DO UPDATE SET spreadsheet_id = EXCLUDED.spreadsheet_id, uploaded_at = NOW()
+    DO UPDATE SET spreadsheet_id = EXCLUDED.spreadsheet_id, uploaded_at = NOW(), ativo = false
   `;
   res.json({ success: true });
 });
