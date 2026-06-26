@@ -831,7 +831,6 @@ app.get("/admin/entregadores", verificarToken, verificarGestor, async (req, res)
     const planilha = await sql`
       SELECT spreadsheet_id FROM planilhas_quinzena
       WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
-        AND ativo IS NOT FALSE
       LIMIT 1
     `;
     if (!planilha.length) {
@@ -1015,7 +1014,6 @@ app.get("/admin/resumo-quinzena", verificarToken, verificarGestor, async (req, r
     const planilha = await sql`
       SELECT spreadsheet_id FROM planilhas_quinzena
       WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
-        AND ativo IS NOT FALSE
       LIMIT 1
     `;
     if (!planilha.length) {
