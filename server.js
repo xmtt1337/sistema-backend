@@ -899,7 +899,6 @@ app.get("/admin/painel", verificarToken, verificarGestor, async (req, res) => {
     const planilha = await sql`
       SELECT spreadsheet_id FROM planilhas_quinzena
       WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
-        AND ativo IS NOT FALSE
       LIMIT 1
     `;
     if (!planilha.length) {
