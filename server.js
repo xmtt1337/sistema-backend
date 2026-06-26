@@ -691,7 +691,7 @@ app.get("/painel", verificarToken, async (req, res) => {
     const nomeEntregador = req.user.name || req.user.username;
 
     const planilha = await sql`
-      SELECT spreadsheet_id, uploaded_at FROM planilhas_quinzena
+      SELECT spreadsheet_id, uploaded_at, ativado_at FROM planilhas_quinzena
       WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
         AND ativo IS NOT FALSE
       LIMIT 1
@@ -814,6 +814,7 @@ app.get("/painel", verificarToken, async (req, res) => {
       multas_linhas:        multaslst,
       multas_tem_valor:     multas_valor !== 0,
       planilha_uploaded_at: planilha[0].uploaded_at || null,
+      planilha_ativado_at:  planilha[0].ativado_at  || null,
       antecipacao_info
     });
 
@@ -1080,7 +1081,11 @@ app.patch("/admin/planilhas/:id/toggle", verificarToken, verificarGestor, async 
   const row = await sql`SELECT ativo FROM planilhas_quinzena WHERE id = ${req.params.id}`;
   if (!row.length) return res.status(404).json({ error: "Não encontrado." });
   const novoAtivo = row[0].ativo === false ? true : false;
-  await sql`UPDATE planilhas_quinzena SET ativo = ${novoAtivo} WHERE id = ${req.params.id}`;
+  if (novoAtivo) {
+    await sql`UPDATE planilhas_quinzena SET ativo = true, ativado_at = NOW() WHERE id = ${req.params.id}`;
+  } else {
+    await sql`UPDATE planilhas_quinzena SET ativo = false WHERE id = ${req.params.id}`;
+  }
   res.json({ ativo: novoAtivo });
 });
 
@@ -2562,6 +2567,7 @@ async function initDB() {
   await sql`ALTER TABLE planilhas_quinzena ADD COLUMN IF NOT EXISTS ignora_nf BOOLEAN DEFAULT false`;
   await sql`ALTER TABLE planilhas_quinzena ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMP`;
   await sql`ALTER TABLE planilhas_quinzena ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true`;
+  await sql`ALTER TABLE planilhas_quinzena ADD COLUMN IF NOT EXISTS ativado_at TIMESTAMP`;
   await sql`UPDATE planilhas_quinzena SET ativo = true WHERE ativo IS NULL`;
   await sql`
     UPDATE planilhas_quinzena SET ignora_nf = true
