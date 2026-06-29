@@ -342,7 +342,6 @@ app.get("/admin/pagamentos", verificarToken, verificarGestor, async (req, res) =
     const planilha = await sql`
       SELECT spreadsheet_id FROM planilhas_quinzena
       WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
-        AND ativo IS NOT FALSE
       LIMIT 1
     `;
     if (!planilha.length) return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
@@ -447,7 +446,6 @@ app.get("/admin/pagamentos/csv", verificarToken, verificarGestor, async (req, re
     const planilha = await sql`
       SELECT spreadsheet_id FROM planilhas_quinzena
       WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
-        AND ativo IS NOT FALSE
       LIMIT 1
     `;
     if (!planilha.length) return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
@@ -1278,7 +1276,7 @@ app.get("/admin/historico", verificarToken, verificarGestor, async (req, res) =>
     const planilhas = await sql`
       SELECT mes, quinzena, spreadsheet_id
       FROM planilhas_quinzena
-      WHERE ano = ${parseInt(ano)} AND ativo IS NOT FALSE
+      WHERE ano = ${parseInt(ano)}
       ORDER BY mes ASC, quinzena ASC
     `;
     if (!planilhas.length) return res.json([]);
@@ -1371,7 +1369,6 @@ app.get("/admin/conferencia", verificarToken, verificarGestor, async (req, res) 
     const planilha = await sql`
       SELECT spreadsheet_id FROM planilhas_quinzena
       WHERE mes = ${parseInt(mes)} AND ano = ${parseInt(ano)} AND quinzena = ${parseInt(quinzena)}
-        AND ativo IS NOT FALSE
       LIMIT 1
     `;
     if (!planilha.length) return res.status(404).json({ error: "Nenhum fechamento encontrado para este período." });
