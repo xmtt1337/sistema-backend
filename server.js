@@ -2778,6 +2778,8 @@ async function initDB() {
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS nivel INT DEFAULT 1`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT`;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users (LOWER(email)) WHERE email IS NOT NULL`;
+  // Bipagens de CEP antigas nao tinham a coluna cep preenchida (codigo == cep nesses casos)
+  await sql`UPDATE bipagens_log SET cep = codigo WHERE transportadora = 'cep' AND cep IS NULL`;
   await sql`
     CREATE TABLE IF NOT EXISTS password_reset_tokens (
       id          SERIAL PRIMARY KEY,
