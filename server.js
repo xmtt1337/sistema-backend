@@ -3,9 +3,18 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
+const nodemailer = require("nodemailer");
 const { google } = require("googleapis");
 const { Pool } = require("pg");
 const sql = require("./db");
+
+function _mailTransporter() {
+  return nodemailer.createTransport({
+    service: "gmail",
+    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+  });
+}
 
 const pgPool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -183,7 +192,107 @@ app.post("/redefinir-senha", async (req, res) => {
     if (!user.length || senha_atual !== user[0].password) {
       return res.status(401).json({ success: false, error: "Usuário ou senha atual incorretos." });
     }
+    if (user[0].password !== "GC2026") {
+      return res.status(403).json({ success: false, error: "Você já definiu sua senha. Use \"Esqueci minha senha\" na tela de login para alterá-la." });
+    }
     await sql`UPDATE users SET password = ${senha_nova} WHERE username = ${username}`;
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ───── ESQUECI MINHA SENHA (fluxo por e-mail) ─────
+app.post("/esqueci-senha", async (req, res) => {
+  const { username, email } = req.body;
+  if (!username || !email) {
+    return res.status(400).json({ success: false, error: "Preencha usuário e e-mail." });
+  }
+  try {
+    const user = await sql`SELECT * FROM users WHERE username = ${username}`;
+    if (!user.length) {
+      return res.status(404).json({ success: false, error: "Usuário não encontrado." });
+    }
+    const u = user[0];
+    const emailNorm = email.toLowerCase().trim();
+    if (u.email) {
+      if (u.email.toLowerCase() !== emailNorm) {
+        return res.status(401).json({ success: false, error: "E-mail não corresponde ao cadastrado." });
+      }
+    } else {
+      await sql`UPDATE users SET email = ${emailNorm} WHERE id = ${u.id}`;
+    }
+    const tokenPlain = crypto.randomBytes(32).toString("hex");
+    const tokenHash  = crypto.createHash("sha256").update(tokenPlain).digest("hex");
+    const expiresAt  = new Date(Date.now() + 30 * 60 * 1000);
+    await sql`
+      INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+      VALUES (${u.id}, ${tokenHash}, ${expiresAt})
+    `;
+    const link = `https://xmtt1337.github.io/GC-Transportes/redefinir-senha.html?token=${tokenPlain}`;
+    try {
+      await _mailTransporter().sendMail({
+        from: `"GC Transportes" <${process.env.EMAIL_USER}>`,
+        to: u.email || emailNorm,
+        subject: "Redefinição de senha — GC Transportes",
+        html: `
+          <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:24px">
+            <h2 style="color:#3a86ff">GC Transportes</h2>
+            <p>Olá, ${u.name || u.username}.</p>
+            <p>Recebemos uma solicitação para redefinir sua senha. Clique no botão abaixo para criar uma nova senha:</p>
+            <p style="text-align:center;margin:28px 0">
+              <a href="${link}" style="background:#3a86ff;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">Redefinir senha</a>
+            </p>
+            <p style="font-size:12px;color:#666">Este link expira em 30 minutos. Se você não solicitou, ignore este e-mail.</p>
+          </div>`,
+      });
+    } catch (mailErr) {
+      console.error("[email] Falha ao enviar:", mailErr.message);
+      return res.status(500).json({ success: false, error: "Não foi possível enviar o e-mail. Tente novamente mais tarde." });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/redefinir-senha/validar", async (req, res) => {
+  const { token } = req.query;
+  if (!token) return res.status(400).json({ valid: false, error: "Token não fornecido." });
+  try {
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const rows = await sql`SELECT * FROM password_reset_tokens WHERE token_hash = ${tokenHash}`;
+    if (!rows.length || rows[0].used || new Date(rows[0].expires_at) < new Date()) {
+      return res.status(400).json({ valid: false, error: "Link inválido ou expirado." });
+    }
+    const userAgent = req.get("user-agent") || null;
+    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
+    await sql`UPDATE password_reset_tokens SET user_agent = ${userAgent}, ip = ${ip}, clicked_at = NOW() WHERE id = ${rows[0].id}`;
+    res.json({ valid: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/redefinir-senha/confirmar", async (req, res) => {
+  const { token, senha_nova } = req.body;
+  if (!token || !senha_nova) {
+    return res.status(400).json({ success: false, error: "Preencha todos os campos." });
+  }
+  if (senha_nova.length < 4) {
+    return res.status(400).json({ success: false, error: "A senha nova deve ter pelo menos 4 caracteres." });
+  }
+  if (senha_nova === "GC2026") {
+    return res.status(400).json({ success: false, error: "Esta senha não pode ser utilizada. Escolha uma senha diferente." });
+  }
+  try {
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const rows = await sql`SELECT * FROM password_reset_tokens WHERE token_hash = ${tokenHash}`;
+    if (!rows.length || rows[0].used || new Date(rows[0].expires_at) < new Date()) {
+      return res.status(400).json({ success: false, error: "Link inválido ou expirado." });
+    }
+    await sql`UPDATE users SET password = ${senha_nova} WHERE id = ${rows[0].user_id}`;
+    await sql`UPDATE password_reset_tokens SET used = true WHERE id = ${rows[0].id}`;
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -2625,6 +2734,21 @@ async function initDB() {
   await sql`UPDATE users SET active = TRUE WHERE active IS NULL`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS nivel INT DEFAULT 1`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id          SERIAL PRIMARY KEY,
+      user_id     INTEGER NOT NULL,
+      token_hash  TEXT NOT NULL,
+      user_agent  TEXT,
+      ip          TEXT,
+      used        BOOLEAN DEFAULT FALSE,
+      expires_at  TIMESTAMP NOT NULL,
+      clicked_at  TIMESTAMP,
+      created_at  TIMESTAMP DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_prt_token_hash ON password_reset_tokens(token_hash)`;
   await sql`ALTER TABLE planilhas_quinzena ADD COLUMN IF NOT EXISTS ignora_nf BOOLEAN DEFAULT false`;
   await sql`ALTER TABLE planilhas_quinzena ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMP`;
   await sql`ALTER TABLE planilhas_quinzena ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true`;
