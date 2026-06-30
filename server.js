@@ -11,7 +11,10 @@ const sql = require("./db");
 
 function _mailTransporter() {
   return nodemailer.createTransport({
-    service: "gmail",
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true,
+    family: 4, // evita timeout de conexao IPv6 em hosts como Render
     auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
   });
 }
@@ -2216,8 +2219,9 @@ app.get("/bipagem/desempenho", verificarToken, verificarGestor, async (req, res)
 
 app.get("/bipagem/desempenho-hora", verificarToken, verificarGestor, async (req, res) => {
   try {
-    const { data } = req.query;
+    const { data, transportadora } = req.query;
     if (!data) return res.status(400).json({ error: "Data obrigatória." });
+    const hasTransp = !!(transportadora && transportadora !== 'todas');
 
     // "ultimas": cada pacote (codigo) só conta a bipagem mais recente, mesmo que tenha sido bipado mais de uma vez
     // bipado_em é gravado em UTC — converte para horário de Brasília antes de extrair hora/data
@@ -2227,6 +2231,7 @@ app.get("/bipagem/desempenho-hora", verificarToken, verificarGestor, async (req,
           (bipado_em AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS bipado_local
         FROM bipagens_log
         WHERE usuario_nome IS NOT NULL
+          AND (${hasTransp} = false OR transportadora = ${hasTransp ? transportadora : ''})
         ORDER BY codigo, bipado_em DESC
       )
       SELECT usuario_nome,
@@ -2245,6 +2250,7 @@ app.get("/bipagem/desempenho-hora", verificarToken, verificarGestor, async (req,
           (bipado_em AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS bipado_local
         FROM bipagens_log
         WHERE usuario_nome IS NOT NULL
+          AND (${hasTransp} = false OR transportadora = ${hasTransp ? transportadora : ''})
         ORDER BY codigo, bipado_em DESC
       ),
       por_dia AS (
