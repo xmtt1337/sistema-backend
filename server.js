@@ -276,8 +276,8 @@ app.get("/redefinir-senha/validar", async (req, res) => {
 });
 
 app.post("/redefinir-senha/confirmar", async (req, res) => {
-  const { token, senha_nova } = req.body;
-  if (!token || !senha_nova) {
+  const { token, username, senha_nova } = req.body;
+  if (!token || !username || !senha_nova) {
     return res.status(400).json({ success: false, error: "Preencha todos os campos." });
   }
   if (senha_nova.length < 4) {
@@ -291,6 +291,10 @@ app.post("/redefinir-senha/confirmar", async (req, res) => {
     const rows = await sql`SELECT * FROM password_reset_tokens WHERE token_hash = ${tokenHash}`;
     if (!rows.length || rows[0].used || new Date(rows[0].expires_at) < new Date()) {
       return res.status(400).json({ success: false, error: "Link inválido ou expirado." });
+    }
+    const user = await sql`SELECT * FROM users WHERE id = ${rows[0].user_id}`;
+    if (!user.length || user[0].username.toLowerCase() !== username.toLowerCase().trim()) {
+      return res.status(401).json({ success: false, error: "Usuário não corresponde a este link." });
     }
     await sql`UPDATE users SET password = ${senha_nova} WHERE id = ${rows[0].user_id}`;
     await sql`UPDATE password_reset_tokens SET used = true WHERE id = ${rows[0].id}`;
