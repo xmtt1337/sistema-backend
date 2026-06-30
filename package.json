@@ -23,6 +23,7 @@
     "pdfjs-dist": "^3.11.174",
     "pg": "^8.18.0",
     "tesseract.js": "^5.1.1",
-    "ua-parser-js": "^2.0.10"
+    "ua-parser-js": "^2.0.10",
+    "xlsx": "^0.18.5"
   }
 }

@@ -4,6 +4,7 @@ const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
+const XLSX   = require("xlsx");
 const { UAParser } = require("ua-parser-js");
 const { google } = require("googleapis");
 const { Pool } = require("pg");
@@ -1950,6 +1951,39 @@ const TORRE_ALIMENTAR_SHEETS = {
   shopee:       "1dWJBXefnxK-B0J3NUjQ4RFouAEGLEF3IKq3UHtUTxAg",
   totalexpress: "1X86YGjRG5VSxpdCaEZL1K-wFx03WRSQ_WenE6HAopLg",
 };
+
+app.post("/torre-controle/alimentar", verificarToken, verificarAdmin, async (req, res) => {
+  const { transportadora, nome_arquivo, dados_base64 } = req.body;
+  if (!transportadora || !dados_base64)
+    return res.status(400).json({ error: "Dados incompletos." });
+  if (!TORRE_ALIMENTAR_SHEETS[transportadora])
+    return res.status(400).json({ error: "Transportadora não configurada." });
+  try {
+    const buffer = Buffer.from(dados_base64, "base64");
+    const wb    = XLSX.read(buffer, { type: "buffer" });
+    const ws    = wb.Sheets[wb.SheetNames[0]];
+    const rows  = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+    if (!rows.length) return res.status(400).json({ error: "Arquivo vazio ou sem dados." });
+
+    const creds  = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+    const auth   = new google.auth.GoogleAuth({ credentials: creds, scopes: ["https://www.googleapis.com/auth/spreadsheets"] });
+    const sheets = google.sheets({ version: "v4", auth });
+    const sheetId = TORRE_ALIMENTAR_SHEETS[transportadora];
+
+    await sheets.spreadsheets.values.clear({ spreadsheetId: sheetId, range: "Alimentar!A:ZZ" });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: sheetId,
+      range: "Alimentar!A1",
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: rows },
+    });
+
+    res.json({ success: true, linhas: rows.length - 1, arquivo: nome_arquivo });
+  } catch (err) {
+    console.error("[torre/alimentar]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.post("/alimentar/upload", verificarToken, verificarNaoEntregador, async (req, res) => {
   try {
