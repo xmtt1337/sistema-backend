@@ -1941,6 +1941,16 @@ app.get("/alimentar/arquivos", verificarToken, verificarNaoEntregador, async (re
   }
 });
 
+// Planilhas Google Sheets da Torre de Controle > Alimentar (aba "Alimentar" em cada uma)
+const TORRE_ALIMENTAR_SHEETS = {
+  anjun:        "1pzJcsWQe62SbvsKjkdpMtX3u_kNphYwZis2o6W1-ZTg",
+  imile:        "1W1rKTKgNUpH0qQY7UGhdFP9hJvwKDch07YZGiPg0lx8",
+  jt:           "1IJtMwgU_5mU4yGjSTV8ocJClV4SKNOTYXupSfh1wcAY",
+  loggi:        "1kZu3g85qid7TcZttkIHL_6ty_nDmIn_pvE8Kk4AKhJQ",
+  shopee:       "1dWJBXefnxK-B0J3NUjQ4RFouAEGLEF3IKq3UHtUTxAg",
+  totalexpress: "1X86YGjRG5VSxpdCaEZL1K-wFx03WRSQ_WenE6HAopLg",
+};
+
 app.post("/alimentar/upload", verificarToken, verificarNaoEntregador, async (req, res) => {
   try {
     const { transportadora, nome_arquivo, conteudo_base64, mime_type, pacotes } = req.body;
