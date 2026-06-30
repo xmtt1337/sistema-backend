@@ -4,7 +4,6 @@ const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
-const nodemailer = require("nodemailer");
 const { UAParser } = require("ua-parser-js");
 const { google } = require("googleapis");
 const { Pool } = require("pg");
@@ -22,14 +21,26 @@ function _formatDeviceInfo(userAgent) {
   return partes.filter(Boolean).join(" • ");
 }
 
-function _mailTransporter() {
-  return nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 465,
-    secure: true,
-    family: 4, // evita timeout de conexao IPv6 em hosts como Render
-    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+// Envia e-mail via API HTTP do Brevo — SMTP direto e bloqueado na saida do Render
+async function _enviarEmail({ to, subject, html }) {
+  const resp = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "accept": "application/json",
+      "content-type": "application/json",
+      "api-key": process.env.BREVO_API_KEY,
+    },
+    body: JSON.stringify({
+      sender: { name: "GC Transportes", email: "sleen.dev@gmail.com" },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+    }),
   });
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "");
+    throw new Error(`Brevo ${resp.status}: ${body}`);
+  }
 }
 
 const pgPool = new Pool({
@@ -214,8 +225,7 @@ app.post("/esqueci-senha", async (req, res) => {
     `;
     const link = `https://xmtt1337.github.io/GC-Transportes/redefinir-senha.html?token=${tokenPlain}`;
     try {
-      await _mailTransporter().sendMail({
-        from: `"GC Transportes" <${process.env.EMAIL_USER}>`,
+      await _enviarEmail({
         to: emailNorm,
         subject: "Redefinição de senha — GC Transportes",
         html: `
