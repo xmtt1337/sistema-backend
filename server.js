@@ -2154,7 +2154,7 @@ app.get("/bipagem/desempenho-hora", verificarToken, verificarGestor, async (req,
       GROUP BY usuario_nome, hora
       ORDER BY usuario_nome, hora`;
 
-    // Comparativo: hoje x ontem x média histórica (até o dia anterior à data selecionada)
+    // Comparativo: hoje x última bipagem anterior (não necessariamente "ontem") x média histórica
     // "horas" de cada dia = intervalo entre a primeira e a última bipagem (inclusive), não a contagem de horas com bipagem
     const comparativo = await sql`
       WITH ultimas AS (
@@ -2170,18 +2170,27 @@ app.get("/bipagem/desempenho-hora", verificarToken, verificarGestor, async (req,
           (MAX(EXTRACT(HOUR FROM bipado_local))::int - MIN(EXTRACT(HOUR FROM bipado_local))::int + 1) AS horas
         FROM ultimas
         GROUP BY usuario_nome, DATE(bipado_local)
+      ),
+      ultimo_dia AS (
+        SELECT DISTINCT ON (usuario_nome) usuario_nome,
+          dia AS ultimo_dia, total AS ultimo_total, horas AS ultimo_horas
+        FROM por_dia
+        WHERE dia < ${data}::date
+        ORDER BY usuario_nome, dia DESC
       )
       SELECT
-        usuario_nome,
-        MAX(CASE WHEN dia = ${data}::date THEN total END)::int AS hoje_total,
-        MAX(CASE WHEN dia = ${data}::date THEN horas END)::int AS hoje_horas,
-        MAX(CASE WHEN dia = ${data}::date - 1 THEN total END)::int AS ontem_total,
-        MAX(CASE WHEN dia = ${data}::date - 1 THEN horas END)::int AS ontem_horas,
-        SUM(CASE WHEN dia < ${data}::date THEN total ELSE 0 END)::int AS hist_total,
-        SUM(CASE WHEN dia < ${data}::date THEN horas ELSE 0 END)::int AS hist_horas,
-        COUNT(DISTINCT CASE WHEN dia < ${data}::date THEN dia END)::int AS hist_dias
-      FROM por_dia
-      GROUP BY usuario_nome`;
+        p.usuario_nome,
+        MAX(CASE WHEN p.dia = ${data}::date THEN p.total END)::int AS hoje_total,
+        MAX(CASE WHEN p.dia = ${data}::date THEN p.horas END)::int AS hoje_horas,
+        u.ultimo_dia,
+        u.ultimo_total,
+        u.ultimo_horas,
+        SUM(CASE WHEN p.dia < ${data}::date THEN p.total ELSE 0 END)::int AS hist_total,
+        SUM(CASE WHEN p.dia < ${data}::date THEN p.horas ELSE 0 END)::int AS hist_horas,
+        COUNT(DISTINCT CASE WHEN p.dia < ${data}::date THEN p.dia END)::int AS hist_dias
+      FROM por_dia p
+      LEFT JOIN ultimo_dia u ON u.usuario_nome = p.usuario_nome
+      GROUP BY p.usuario_nome, u.ultimo_dia, u.ultimo_total, u.ultimo_horas`;
 
     res.json({ horas, comparativo });
   } catch (err) {
