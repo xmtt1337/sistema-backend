@@ -2137,18 +2137,20 @@ app.get("/bipagem/desempenho-hora", verificarToken, verificarGestor, async (req,
     if (!data) return res.status(400).json({ error: "Data obrigatória." });
 
     // "ultimas": cada pacote (codigo) só conta a bipagem mais recente, mesmo que tenha sido bipado mais de uma vez
+    // bipado_em é gravado em UTC — converte para horário de Brasília antes de extrair hora/data
     const horas = await sql`
       WITH ultimas AS (
-        SELECT DISTINCT ON (codigo) codigo, usuario_nome, bipado_em
+        SELECT DISTINCT ON (codigo) codigo, usuario_nome,
+          (bipado_em AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS bipado_local
         FROM bipagens_log
         WHERE usuario_nome IS NOT NULL
         ORDER BY codigo, bipado_em DESC
       )
       SELECT usuario_nome,
-        EXTRACT(HOUR FROM bipado_em)::int AS hora,
+        EXTRACT(HOUR FROM bipado_local)::int AS hora,
         COUNT(*)::int AS total
       FROM ultimas
-      WHERE DATE(bipado_em) = ${data}
+      WHERE DATE(bipado_local) = ${data}
       GROUP BY usuario_nome, hora
       ORDER BY usuario_nome, hora`;
 
@@ -2156,17 +2158,18 @@ app.get("/bipagem/desempenho-hora", verificarToken, verificarGestor, async (req,
     // "horas" de cada dia = intervalo entre a primeira e a última bipagem (inclusive), não a contagem de horas com bipagem
     const comparativo = await sql`
       WITH ultimas AS (
-        SELECT DISTINCT ON (codigo) codigo, usuario_nome, bipado_em
+        SELECT DISTINCT ON (codigo) codigo, usuario_nome,
+          (bipado_em AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS bipado_local
         FROM bipagens_log
         WHERE usuario_nome IS NOT NULL
         ORDER BY codigo, bipado_em DESC
       ),
       por_dia AS (
-        SELECT usuario_nome, DATE(bipado_em) AS dia,
+        SELECT usuario_nome, DATE(bipado_local) AS dia,
           COUNT(*)::int AS total,
-          (MAX(EXTRACT(HOUR FROM bipado_em))::int - MIN(EXTRACT(HOUR FROM bipado_em))::int + 1) AS horas
+          (MAX(EXTRACT(HOUR FROM bipado_local))::int - MIN(EXTRACT(HOUR FROM bipado_local))::int + 1) AS horas
         FROM ultimas
-        GROUP BY usuario_nome, DATE(bipado_em)
+        GROUP BY usuario_nome, DATE(bipado_local)
       )
       SELECT
         usuario_nome,
