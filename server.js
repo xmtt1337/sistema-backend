@@ -222,17 +222,23 @@ app.post("/esqueci-senha", async (req, res) => {
     }
     const u = user[0];
     const emailNorm = email.toLowerCase().trim();
-    const outraConta = await sql`SELECT id FROM users WHERE LOWER(email) = ${emailNorm} AND id != ${u.id}`;
-    if (outraConta.length) {
-      return res.status(409).json({ success: false, error: "Esse e-mail já está em uso por outra conta." });
-    }
-    try {
-      await sql`UPDATE users SET email = ${emailNorm} WHERE id = ${u.id}`;
-    } catch (e) {
-      if (e.code === "23505") {
+    if (u.email) {
+      if (u.email.toLowerCase() !== emailNorm) {
+        return res.status(401).json({ success: false, error: "E-mail não corresponde ao cadastrado." });
+      }
+    } else {
+      const outraConta = await sql`SELECT id FROM users WHERE LOWER(email) = ${emailNorm} AND id != ${u.id}`;
+      if (outraConta.length) {
         return res.status(409).json({ success: false, error: "Esse e-mail já está em uso por outra conta." });
       }
-      throw e;
+      try {
+        await sql`UPDATE users SET email = ${emailNorm} WHERE id = ${u.id}`;
+      } catch (e) {
+        if (e.code === "23505") {
+          return res.status(409).json({ success: false, error: "Esse e-mail já está em uso por outra conta." });
+        }
+        throw e;
+      }
     }
     const tokenPlain = crypto.randomBytes(32).toString("hex");
     const tokenHash  = crypto.createHash("sha256").update(tokenPlain).digest("hex");
