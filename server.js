@@ -9,14 +9,20 @@ const { google } = require("googleapis");
 const { Pool } = require("pg");
 const sql = require("./db");
 
-function _formatDeviceInfo(userAgent) {
-  if (!userAgent) return null;
-  const { device, os, browser } = new UAParser(userAgent).getResult();
-  const aparelho = device.vendor || device.model
-    ? `${device.vendor || ""} ${device.model || ""}`.trim()
+// userAgent: string crua do header. clientHints: { model, platform, platformVersion } vindos do
+// navigator.userAgentData do navegador (Chrome/Android congela o modelo no User-Agent por privacidade,
+// entao usamos Client Hints como fonte mais confiavel quando disponivel).
+function _formatDeviceInfo(userAgent, clientHints) {
+  if (!userAgent && !clientHints) return null;
+  const { device, os, browser } = userAgent ? new UAParser(userAgent).getResult() : { device: {}, os: {}, browser: {} };
+  const modelo = (clientHints && clientHints.model) || device.model || null;
+  const aparelho = device.vendor || modelo
+    ? `${device.vendor || ""} ${modelo || ""}`.trim()
     : (device.type === "mobile" || device.type === "tablet") ? "Dispositivo móvel" : "Computador";
+  const osNome = (clientHints && clientHints.platform) || os.name;
+  const osVersao = (clientHints && clientHints.platformVersion) || os.version;
   const partes = [aparelho];
-  if (os.name) partes.push(`${os.name}${os.version ? " " + os.version : ""}`);
+  if (osNome) partes.push(`${osNome}${osVersao ? " " + osVersao : ""}`);
   if (browser.name) partes.push(`${browser.name}${browser.version ? " " + browser.version : ""}`);
   return partes.filter(Boolean).join(" • ");
 }
@@ -250,7 +256,7 @@ app.post("/esqueci-senha", async (req, res) => {
 });
 
 app.get("/redefinir-senha/validar", async (req, res) => {
-  const { token } = req.query;
+  const { token, model, platform, platformVersion } = req.query;
   if (!token) return res.status(400).json({ valid: false, error: "Token não fornecido." });
   try {
     const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
@@ -260,7 +266,8 @@ app.get("/redefinir-senha/validar", async (req, res) => {
     }
     const userAgent = req.get("user-agent") || null;
     const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
-    const deviceInfo = _formatDeviceInfo(userAgent);
+    const clientHints = model ? { model, platform, platformVersion } : null;
+    const deviceInfo = _formatDeviceInfo(userAgent, clientHints);
     await sql`UPDATE password_reset_tokens SET user_agent = ${userAgent}, device_info = ${deviceInfo}, ip = ${ip}, clicked_at = NOW() WHERE id = ${rows[0].id}`;
     res.json({ valid: true });
   } catch (error) {
