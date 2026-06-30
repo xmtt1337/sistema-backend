@@ -2135,16 +2135,52 @@ app.get("/bipagem/desempenho-hora", verificarToken, verificarGestor, async (req,
   try {
     const { data } = req.query;
     if (!data) return res.status(400).json({ error: "Data obrigatória." });
-    const rows = await sql`
+
+    // "ultimas": cada pacote (codigo) só conta a bipagem mais recente, mesmo que tenha sido bipado mais de uma vez
+    const horas = await sql`
+      WITH ultimas AS (
+        SELECT DISTINCT ON (codigo) codigo, usuario_nome, bipado_em
+        FROM bipagens_log
+        WHERE usuario_nome IS NOT NULL
+        ORDER BY codigo, bipado_em DESC
+      )
       SELECT usuario_nome,
         EXTRACT(HOUR FROM bipado_em)::int AS hora,
         COUNT(*)::int AS total
-      FROM bipagens_log
-      WHERE usuario_nome IS NOT NULL
-        AND DATE(bipado_em) = ${data}
+      FROM ultimas
+      WHERE DATE(bipado_em) = ${data}
       GROUP BY usuario_nome, hora
       ORDER BY usuario_nome, hora`;
-    res.json(rows);
+
+    // Comparativo: hoje x ontem x média histórica (até o dia anterior à data selecionada)
+    // "horas" de cada dia = intervalo entre a primeira e a última bipagem (inclusive), não a contagem de horas com bipagem
+    const comparativo = await sql`
+      WITH ultimas AS (
+        SELECT DISTINCT ON (codigo) codigo, usuario_nome, bipado_em
+        FROM bipagens_log
+        WHERE usuario_nome IS NOT NULL
+        ORDER BY codigo, bipado_em DESC
+      ),
+      por_dia AS (
+        SELECT usuario_nome, DATE(bipado_em) AS dia,
+          COUNT(*)::int AS total,
+          (MAX(EXTRACT(HOUR FROM bipado_em))::int - MIN(EXTRACT(HOUR FROM bipado_em))::int + 1) AS horas
+        FROM ultimas
+        GROUP BY usuario_nome, DATE(bipado_em)
+      )
+      SELECT
+        usuario_nome,
+        MAX(CASE WHEN dia = ${data}::date THEN total END)::int AS hoje_total,
+        MAX(CASE WHEN dia = ${data}::date THEN horas END)::int AS hoje_horas,
+        MAX(CASE WHEN dia = ${data}::date - 1 THEN total END)::int AS ontem_total,
+        MAX(CASE WHEN dia = ${data}::date - 1 THEN horas END)::int AS ontem_horas,
+        SUM(CASE WHEN dia < ${data}::date THEN total ELSE 0 END)::int AS hist_total,
+        SUM(CASE WHEN dia < ${data}::date THEN horas ELSE 0 END)::int AS hist_horas,
+        COUNT(DISTINCT CASE WHEN dia < ${data}::date THEN dia END)::int AS hist_dias
+      FROM por_dia
+      GROUP BY usuario_nome`;
+
+    res.json({ horas, comparativo });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
