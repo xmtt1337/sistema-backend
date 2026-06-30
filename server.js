@@ -176,32 +176,6 @@ app.get("/perfil", verificarToken, (req, res) => {
   res.json({ message: "Acesso permitido ✅", usuario: req.user });
 });
 
-app.post("/redefinir-senha", async (req, res) => {
-  const { username, senha_atual, senha_nova } = req.body;
-  if (!username || !senha_atual || !senha_nova) {
-    return res.status(400).json({ success: false, error: "Preencha todos os campos." });
-  }
-  if (senha_nova.length < 4) {
-    return res.status(400).json({ success: false, error: "A senha nova deve ter pelo menos 4 caracteres." });
-  }
-  if (senha_nova === "GC2026") {
-    return res.status(400).json({ success: false, error: "Esta senha não pode ser utilizada. Escolha uma senha diferente." });
-  }
-  try {
-    const user = await sql`SELECT * FROM users WHERE username = ${username}`;
-    if (!user.length || senha_atual !== user[0].password) {
-      return res.status(401).json({ success: false, error: "Usuário ou senha atual incorretos." });
-    }
-    if (user[0].password !== "GC2026") {
-      return res.status(403).json({ success: false, error: "Você já definiu sua senha. Use \"Esqueci minha senha\" na tela de login para alterá-la." });
-    }
-    await sql`UPDATE users SET password = ${senha_nova} WHERE username = ${username}`;
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // ───── ESQUECI MINHA SENHA (fluxo por e-mail) ─────
 app.post("/esqueci-senha", async (req, res) => {
   const { username, email } = req.body;
