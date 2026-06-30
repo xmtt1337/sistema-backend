@@ -2131,6 +2131,25 @@ app.get("/bipagem/desempenho", verificarToken, verificarGestor, async (req, res)
   }
 });
 
+app.get("/bipagem/desempenho-hora", verificarToken, verificarGestor, async (req, res) => {
+  try {
+    const { data } = req.query;
+    if (!data) return res.status(400).json({ error: "Data obrigatória." });
+    const rows = await sql`
+      SELECT usuario_nome,
+        EXTRACT(HOUR FROM bipado_em)::int AS hora,
+        COUNT(*)::int AS total
+      FROM bipagens_log
+      WHERE usuario_nome IS NOT NULL
+        AND DATE(bipado_em) = ${data}
+      GROUP BY usuario_nome, hora
+      ORDER BY usuario_nome, hora`;
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/bipagem/meu-desempenho", verificarToken, async (req, res) => {
   try {
     const userId = req.user.id;
