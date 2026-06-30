@@ -205,13 +205,6 @@ app.post("/esqueci-senha", async (req, res) => {
     }
     const u = user[0];
     const emailNorm = email.toLowerCase().trim();
-    if (u.email) {
-      if (u.email.toLowerCase() !== emailNorm) {
-        return res.status(401).json({ success: false, error: "E-mail não corresponde ao cadastrado." });
-      }
-    } else {
-      await sql`UPDATE users SET email = ${emailNorm} WHERE id = ${u.id}`;
-    }
     const tokenPlain = crypto.randomBytes(32).toString("hex");
     const tokenHash  = crypto.createHash("sha256").update(tokenPlain).digest("hex");
     const expiresAt  = new Date(Date.now() + 30 * 60 * 1000);
@@ -223,7 +216,7 @@ app.post("/esqueci-senha", async (req, res) => {
     try {
       await _mailTransporter().sendMail({
         from: `"GC Transportes" <${process.env.EMAIL_USER}>`,
-        to: u.email || emailNorm,
+        to: emailNorm,
         subject: "Redefinição de senha — GC Transportes",
         html: `
           <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:24px">
@@ -2728,7 +2721,6 @@ async function initDB() {
   await sql`UPDATE users SET active = TRUE WHERE active IS NULL`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS nivel INT DEFAULT 1`;
-  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT`;
   await sql`
     CREATE TABLE IF NOT EXISTS password_reset_tokens (
       id          SERIAL PRIMARY KEY,
