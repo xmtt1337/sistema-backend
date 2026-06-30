@@ -2148,36 +2148,18 @@ app.get("/pedidos/buscar", verificarToken, verificarNaoEntregador, async (req, r
 
 app.get("/pedidos/lista", verificarToken, verificarNaoEntregador, async (req, res) => {
   try {
-    const { de, ate, exportar } = req.query;
-    const semLimite = exportar === "1";
-    let rows;
-    if (de && ate) {
-      rows = semLimite
-        ? await sql`
-            SELECT codigo, entregador, transportadora, cidade, cep, bipado_em, usuario_nome
-            FROM bipagens_log
-            WHERE bipado_em >= ${de}::date
-              AND bipado_em <  (${ate}::date + interval '1 day')
-            ORDER BY bipado_em DESC`
-        : await sql`
-            SELECT codigo, entregador, transportadora, cidade, cep, bipado_em, usuario_nome
-            FROM bipagens_log
-            WHERE bipado_em >= ${de}::date
-              AND bipado_em <  (${ate}::date + interval '1 day')
-            ORDER BY bipado_em DESC
-            LIMIT 5000`;
-    } else {
-      rows = semLimite
-        ? await sql`
-            SELECT codigo, entregador, transportadora, cidade, cep, bipado_em, usuario_nome
-            FROM bipagens_log
-            ORDER BY bipado_em DESC`
-        : await sql`
-            SELECT codigo, entregador, transportadora, cidade, cep, bipado_em, usuario_nome
-            FROM bipagens_log
-            ORDER BY bipado_em DESC
-            LIMIT 1000`;
-    }
+    const { de, ate } = req.query;
+    const rows = (de && ate)
+      ? await sql`
+          SELECT codigo, entregador, transportadora, cidade, cep, bipado_em, usuario_nome
+          FROM bipagens_log
+          WHERE bipado_em >= ${de}::date
+            AND bipado_em <  (${ate}::date + interval '1 day')
+          ORDER BY bipado_em DESC`
+      : await sql`
+          SELECT codigo, entregador, transportadora, cidade, cep, bipado_em, usuario_nome
+          FROM bipagens_log
+          ORDER BY bipado_em DESC`;
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
