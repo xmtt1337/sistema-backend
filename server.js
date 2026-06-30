@@ -5,9 +5,22 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
+const { UAParser } = require("ua-parser-js");
 const { google } = require("googleapis");
 const { Pool } = require("pg");
 const sql = require("./db");
+
+function _formatDeviceInfo(userAgent) {
+  if (!userAgent) return null;
+  const { device, os, browser } = new UAParser(userAgent).getResult();
+  const aparelho = device.vendor || device.model
+    ? `${device.vendor || ""} ${device.model || ""}`.trim()
+    : (device.type === "mobile" || device.type === "tablet") ? "Dispositivo móvel" : "Computador";
+  const partes = [aparelho];
+  if (os.name) partes.push(`${os.name}${os.version ? " " + os.version : ""}`);
+  if (browser.name) partes.push(`${browser.name}${browser.version ? " " + browser.version : ""}`);
+  return partes.filter(Boolean).join(" • ");
+}
 
 function _mailTransporter() {
   return nodemailer.createTransport({
@@ -244,7 +257,8 @@ app.get("/redefinir-senha/validar", async (req, res) => {
     }
     const userAgent = req.get("user-agent") || null;
     const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
-    await sql`UPDATE password_reset_tokens SET user_agent = ${userAgent}, ip = ${ip}, clicked_at = NOW() WHERE id = ${rows[0].id}`;
+    const deviceInfo = _formatDeviceInfo(userAgent);
+    await sql`UPDATE password_reset_tokens SET user_agent = ${userAgent}, device_info = ${deviceInfo}, ip = ${ip}, clicked_at = NOW() WHERE id = ${rows[0].id}`;
     res.json({ valid: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -2729,6 +2743,7 @@ async function initDB() {
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_prt_token_hash ON password_reset_tokens(token_hash)`;
+  await sql`ALTER TABLE password_reset_tokens ADD COLUMN IF NOT EXISTS device_info TEXT`;
   await sql`ALTER TABLE planilhas_quinzena ADD COLUMN IF NOT EXISTS ignora_nf BOOLEAN DEFAULT false`;
   await sql`ALTER TABLE planilhas_quinzena ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMP`;
   await sql`ALTER TABLE planilhas_quinzena ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true`;
