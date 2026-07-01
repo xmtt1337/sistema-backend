@@ -13,6 +13,17 @@ const sql = require("./db");
 // userAgent: string crua do header. clientHints: { model, platform, platformVersion } vindos do
 // navigator.userAgentData do navegador (Chrome/Android congela o modelo no User-Agent por privacidade,
 // entao usamos Client Hints como fonte mais confiavel quando disponivel).
+async function _buscarLocalizacao(ip) {
+  if (!ip || ip === "::1" || ip.startsWith("127.") || ip.startsWith("192.168.") || ip.startsWith("10.")) return null;
+  try {
+    const r = await fetch(`http://ip-api.com/json/${ip}?fields=status,city,regionName,countryCode&lang=pt-BR`);
+    const d = await r.json();
+    if (d.status !== "success") return null;
+    const partes = [d.city, d.regionName, d.countryCode].filter(Boolean);
+    return partes.length ? partes.join(", ") : null;
+  } catch { return null; }
+}
+
 function _formatDeviceInfo(userAgent, clientHints) {
   if (!userAgent && !clientHints) return null;
   const { device, os, browser } = userAgent ? new UAParser(userAgent).getResult() : { device: {}, os: {}, browser: {} };
@@ -286,8 +297,12 @@ app.get("/redefinir-senha/validar", async (req, res) => {
     const userAgent = req.get("user-agent") || null;
     const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
     const clientHints = model ? { model, platform, platformVersion } : null;
-    const deviceInfo = _formatDeviceInfo(userAgent, clientHints);
-    await sql`UPDATE password_reset_tokens SET user_agent = ${userAgent}, device_info = ${deviceInfo}, ip = ${ip}, clicked_at = NOW() WHERE id = ${rows[0].id}`;
+    const [deviceInfo, localizacao] = await Promise.all([
+      Promise.resolve(_formatDeviceInfo(userAgent, clientHints)),
+      _buscarLocalizacao(ip),
+    ]);
+    const deviceInfoFinal = [localizacao, deviceInfo].filter(Boolean).join(" • ");
+    await sql`UPDATE password_reset_tokens SET user_agent = ${userAgent}, device_info = ${deviceInfoFinal || null}, ip = ${ip}, clicked_at = NOW() WHERE id = ${rows[0].id}`;
     res.json({ valid: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1962,20 +1977,36 @@ app.post("/torre-controle/alimentar", verificarToken, verificarAdmin, async (req
     const buffer = Buffer.from(dados_base64, "base64");
     const wb    = XLSX.read(buffer, { type: "buffer" });
     const ws    = wb.Sheets[wb.SheetNames[0]];
-    const rows  = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-    if (!rows.length) return res.status(400).json({ error: "Arquivo vazio ou sem dados." });
+    const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+    if (!rawRows.length) return res.status(400).json({ error: "Arquivo vazio ou sem dados." });
+    // Converte qualquer celula com formato "YYYY-MM-DD HH:MM:SS" para "DD/MM/YYYY"
+    const _fmtCell = (v) => {
+      if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(v))
+        return v.slice(8,10) + "/" + v.slice(5,7) + "/" + v.slice(0,4);
+      if (v instanceof Date)
+        return v.toLocaleDateString("pt-BR");
+      return v;
+    };
+    const rows = rawRows.map(r => r.map(_fmtCell));
 
     const creds  = JSON.parse(process.env.GOOGLE_CREDENTIALS);
     const auth   = new google.auth.GoogleAuth({ credentials: creds, scopes: ["https://www.googleapis.com/auth/spreadsheets"] });
     const sheets = google.sheets({ version: "v4", auth });
     const sheetId = TORRE_ALIMENTAR_SHEETS[transportadora];
 
-    await sheets.spreadsheets.values.clear({ spreadsheetId: sheetId, range: "Alimentar!A:ZZ" });
+    // Dados brutos vao pra Sheet1; Alimentar fica com a formula QUERY
+    await sheets.spreadsheets.values.clear({ spreadsheetId: sheetId, range: "sheet1!A:ZZ" });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: sheetId,
+      range: "sheet1!A1",
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: rows },
+    });
     await sheets.spreadsheets.values.update({
       spreadsheetId: sheetId,
       range: "Alimentar!A1",
       valueInputOption: "USER_ENTERED",
-      requestBody: { values: rows },
+      requestBody: { values: [['=QUERY(sheet1!1:2857800;"select Col30, Col13, Col8, Date(Col16) dd/mm/yyyy, Date(Col17) dd/mm/yyyy, Col26, Col27")']] },
     });
 
     res.json({ success: true, linhas: rows.length - 1, arquivo: nome_arquivo });
