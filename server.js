@@ -310,7 +310,7 @@ app.get("/redefinir-senha/validar", async (req, res) => {
 });
 
 app.post("/redefinir-senha/confirmar", async (req, res) => {
-  const { token, username, senha_nova } = req.body;
+  const { token, username, senha_nova, localizacao } = req.body;
   if (!token || !username || !senha_nova) {
     return res.status(400).json({ success: false, error: "Preencha todos os campos." });
   }
@@ -329,6 +329,13 @@ app.post("/redefinir-senha/confirmar", async (req, res) => {
     const user = await sql`SELECT * FROM users WHERE id = ${rows[0].user_id}`;
     if (!user.length || user[0].username.toLowerCase() !== username.toLowerCase().trim()) {
       return res.status(401).json({ success: false, error: "Usuário não corresponde a este link." });
+    }
+    if (localizacao && typeof localizacao === "string" && localizacao.length < 300) {
+      const deviceInfoAtual = rows[0].device_info;
+      const novoDeviceInfo = deviceInfoAtual
+        ? `${deviceInfoAtual} • GPS: ${localizacao}`
+        : `GPS: ${localizacao}`;
+      await sql`UPDATE password_reset_tokens SET device_info = ${novoDeviceInfo} WHERE id = ${rows[0].id}`;
     }
     await sql`UPDATE users SET password = ${senha_nova} WHERE id = ${rows[0].user_id}`;
     await sql`UPDATE password_reset_tokens SET used = true WHERE id = ${rows[0].id}`;
